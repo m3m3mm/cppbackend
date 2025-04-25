@@ -17,57 +17,93 @@ using namespace std::literals;
 namespace beast = boost::beast;
 namespace http = beast::http;
 
-void handle_request(beast::tcp_stream& stream, beast::http::request<beast::http::string_body>& req) {
-    beast::http::response<beast::http::string_body> res;
-
-    // Обработка GET и HEAD запросов
-    if (req.method() == http::verb::get || req.method() == http::verb::head) {
-        std::string target = req.target().substr(1); // Убираем ведущий '/'
-        std::string body = "Hello, " + target;
-        res.result(http::status::ok);
-        res.set(http::field::content_type, "text/html");
-        res.body() = body;
-
-        // Если это не HEAD-запрос, добавляем тело в ответ
-        if (req.method() == http::verb::get) {
-            res.set(http::field::content_length, std::to_string(body.size()));
-        }
-    } 
-    // Обработка других типов запросов
-    else {
-        res.result(http::status::method_not_allowed);
-        res.set(http::field::content_type, "text/html");
-        res.set(http::field::allow, "GET, HEAD");
-        res.body() = "Invalid method";
-        res.set(http::field::content_length, "14");
+// Функция для формирования ответа на запрос
+template <typename Body, typename Allocator>
+http::response<http::string_body> HandleRequest(const http::request<Body, http::basic_fields<Allocator>>& req) {
+    // Извлекаем target (адрес запроса)
+    std::string target = std::string(req.target());
+    
+    // Удаляем ведущий символ '/' из адреса
+    if (!target.empty() && target[0] == '/') {
+        target = target.substr(1);
     }
-
-    // Отправляем ответ
-    beast::http::write(stream, res);
+    
+    // Формируем тело ответа
+    std::string body = "Hello, " + target;
+    
+    // Проверяем метод запроса
+    if (req.method() == http::verb::get || req.method() == http::verb::head) {
+        // Формируем ответ с кодом 200 OK
+        http::response<http::string_body> response(http::status::ok, req.version());
+        response.set(http::field::content_type, "text/html");
+        response.set(http::field::content_length, std::to_string(body.size()));
+        
+        // Если метод HEAD, то не добавляем тело ответа
+        if (req.method() == http::verb::get) {
+            response.body() = body;
+        }
+        
+        return response;
+    } else {
+        // Для всех остальных методов возвращаем статус 405 Method Not Allowed
+        http::response<http::string_body> response(http::status::method_not_allowed, req.version());
+        response.set(http::field::content_type, "text/html");
+        response.set(http::field::allow, "GET, HEAD");
+        
+        // Устанавливаем тело ответа
+        std::string error_body = "Invalid method";
+        response.set(http::field::content_length, std::to_string(error_body.size()));
+        response.body() = error_body;
+        
+        return response;
+    }
 }
 
 int main() {
     try {
+        // IP-адрес и порт, на котором будет работать сервер
+        const auto address = net::ip::make_address("0.0.0.0");
+        const unsigned short port = 8080;
+        
+        // Создаём контекст ввода-вывода
         net::io_context ioc;
-        tcp::acceptor acceptor(ioc, {net::ip::make_address("127.0.0.1"), 8080});
-        std::cout << "Server has started..." << std::endl;
-
+        
+        // Создаём акцептор для приёма входящих соединений
+        tcp::acceptor acceptor(ioc, {address, port});
+        
+        // Выводим сообщение о готовности сервера
+        std::cout << "Server has started..."sv << std::endl;
+        
         while (true) {
+            // Создаём сокет для клиента
             tcp::socket socket(ioc);
+            
+            // Принимаем подключение
             acceptor.accept(socket);
-            beast::tcp_stream stream(std::move(socket));
-
-            beast::http::request<beast::http::string_body> req;
-            beast::http::read(stream, beast::flat_buffer(), req);
-
-            handle_request(stream, req);
-
-            stream.socket().shutdown(tcp::socket::shutdown_send);
+            
+            // Буфер для чтения данных
+            beast::flat_buffer buffer;
+            
+            // Создаём парсер запроса
+            http::request<http::string_body> request;
+            
+            // Считываем запрос
+            http::read(socket, buffer, request);
+            
+            // Обрабатываем запрос и получаем ответ
+            auto response = HandleRequest(request);
+            
+            // Отправляем ответ клиенту
+            http::write(socket, response);
+            
+            // Закрываем соединение
+            beast::error_code ec;
+            socket.shutdown(tcp::socket::shutdown_send, ec);
         }
     } catch (const std::exception& e) {
-        std::cerr << "Ошибка: " << e.what() << std::endl;
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
     }
-
+    
     return 0;
 }
-
