@@ -60,7 +60,7 @@ int main(int argc, const char* argv[]) {
         });
 
         // 6. Запускаем обработку асинхронных операций
-        std::cout << "server started" << std::endl;
+        std::cout << "Server has started..."sv << std::endl; // FIXED
         RunWorkers(num_threads, [&ioc] {
             ioc.run();
         });

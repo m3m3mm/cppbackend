@@ -7,6 +7,7 @@
 #include <boost/beast/http.hpp>
 #include <string>
 #include <memory>
+#include <functional> // Required for std::function
 
 namespace http_server {
 
@@ -40,7 +41,7 @@ private:
 class Session : public std::enable_shared_from_this<Session> {
 public:
     // Take ownership of the socket
-    explicit Session(tcp::socket&& socket, RequestHandler&& handler);
+    explicit Session(tcp::socket&& socket, RequestHandler handler); // FIXED: Take handler by value
 
     // Start the asynchronous operation
     void Run();

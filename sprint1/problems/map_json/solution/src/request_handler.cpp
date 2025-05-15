@@ -2,6 +2,7 @@
 #include <boost/json.hpp>
 #include <string>
 #include <string_view>
+#include <iostream>
 
 namespace http_handler {
 
@@ -46,7 +47,14 @@ void RequestHandler::HandleGetMaps() {
 }
 
 void RequestHandler::HandleGetMap(beast::string_view id) {
+    std::cerr << "Looking for map with id: " << id << std::endl;
+    std::cerr << "Available maps:" << std::endl;
+    for (const auto& map : game_.GetMaps()) {
+        std::cerr << "  - " << *map.GetId() << std::endl;
+    }
+    
     if (auto map = game_.FindMap(model::Map::Id{std::string(id)})) {
+        std::cerr << "Found map: " << *map->GetId() << std::endl;
         json::object map_obj;
         map_obj["id"] = *map->GetId();
         map_obj["name"] = map->GetName();
@@ -98,6 +106,7 @@ void RequestHandler::HandleGetMap(beast::string_view id) {
         
         send_(MakeSuccessResponse(http::status::ok, map_obj));
     } else {
+        std::cerr << "Map not found" << std::endl;
         send_(MakeErrorResponse(http::status::not_found, "mapNotFound", "Map not found"));
     }
 }

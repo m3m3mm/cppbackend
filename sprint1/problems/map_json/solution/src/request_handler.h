@@ -38,7 +38,12 @@ public:
                 }
             } else if (target.starts_with("/api/v1/maps/")) {
                 if (req_.method() == http::verb::get) {
-                    HandleGetMap(target.substr(13)); // Remove "/api/v1/maps/"
+                    auto id = target.substr(api_maps_slash.length());
+                    if (id.empty()) {
+                        send_(MakeErrorResponse(http::status::bad_request, "badRequest", "Bad request"));
+                    } else {
+                        HandleGetMap(id);
+                    }
                 } else {
                     send_(MakeErrorResponse(http::status::method_not_allowed, "methodNotAllowed", "Method not allowed"));
                 }
