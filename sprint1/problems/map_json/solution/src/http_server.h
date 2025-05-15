@@ -1,3 +1,4 @@
+// src/http_server.h
 #pragma once
 #include "sdk.h"
 //
@@ -7,7 +8,7 @@
 #include <boost/beast/http.hpp>
 #include <string>
 #include <memory>
-#include <functional> // Required for std::function
+#include <functional> // Убедимся, что std::function доступен
 
 namespace http_server {
 
@@ -16,16 +17,16 @@ namespace http = beast::http;
 namespace net = boost::asio;
 using tcp = net::ip::tcp;
 
-// The function object to handle HTTP requests
+// Функциональный объект для обработки HTTP-запросов
 using RequestHandler = std::function<void(http::request<http::string_body>&& req, 
                                         std::function<void(http::response<http::string_body>&&)>&& send)>;
 
-// Accepts incoming connections and launches the sessions
+// Принимает входящие соединения и запускает сессии
 class Listener : public std::enable_shared_from_this<Listener> {
 public:
     Listener(net::io_context& ioc, tcp::endpoint endpoint, RequestHandler&& handler);
 
-    // Start accepting incoming connections
+    // Начать приём входящих соединений
     void Run();
 
 private:
@@ -34,16 +35,17 @@ private:
 
     net::io_context& ioc_;
     tcp::acceptor acceptor_;
-    RequestHandler handler_;
+    RequestHandler handler_; // Хранит копию обработчика для всех сессий
 };
 
-// Handles an HTTP server connection
+// Обрабатывает HTTP-соединение с сервером
 class Session : public std::enable_shared_from_this<Session> {
 public:
-    // Take ownership of the socket
-    explicit Session(tcp::socket&& socket, RequestHandler handler); // FIXED: Take handler by value
+    // Принимает владение сокетом
+    // ИЗМЕНЕНО: Принимаем RequestHandler по значению для упрощения копирования/перемещения
+    explicit Session(tcp::socket&& socket, RequestHandler handler); 
 
-    // Start the asynchronous operation
+    // Запустить асинхронную операцию
     void Run();
 
 private:
@@ -56,10 +58,10 @@ private:
     beast::flat_buffer buffer_;
     http::request<http::string_body> req_;
     http::response<http::string_body> res_;
-    RequestHandler handler_;
+    RequestHandler handler_; // Каждая сессия имеет свою копию (или перемещенный экземпляр) обработчика
 };
 
-// Start the HTTP server
+// Запустить HTTP-сервер
 void ServeHttp(net::io_context& ioc, const tcp::endpoint& endpoint, RequestHandler&& handler);
 
 }  // namespace http_server

@@ -3,6 +3,8 @@
 #include <unordered_map>
 #include <vector>
 #include <optional>
+#include <iostream>
+#include <iomanip>
 
 #include "tagged.h"
 
@@ -122,8 +124,8 @@ public:
     using Offices = std::vector<Office>;
 
     Map(Id id, std::string name) noexcept
-        : id_(std::move(id))
-        , name_(std::move(name)) {
+        : id_{std::move(id)}
+        , name_{std::move(name)} {
     }
 
     const Id& GetId() const noexcept {
@@ -179,6 +181,24 @@ public:
     }
 
     const Map* FindMap(const Map::Id& id) const noexcept {
+        // Debug output
+        std::cerr << "FindMap called with id: '" << *id << "' (length: " << (*id).length() << ")\n";
+        std::cerr << "FindMap id bytes: ";
+        for (char c : *id) {
+            std::cerr << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(static_cast<unsigned char>(c)) << " ";
+        }
+        std::cerr << std::dec << "\n";
+        
+        std::cerr << "Available maps in map_id_to_index_:\n";
+        for (const auto& [map_id, index] : map_id_to_index_) {
+            std::cerr << "  '" << *map_id << "' (length: " << (*map_id).length() << ")\n";
+            std::cerr << "  bytes: ";
+            for (char c : *map_id) {
+                std::cerr << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(static_cast<unsigned char>(c)) << " ";
+            }
+            std::cerr << std::dec << "\n";
+        }
+        
         if (auto it = map_id_to_index_.find(id); it != map_id_to_index_.end()) {
             return &maps_.at(it->second);
         }

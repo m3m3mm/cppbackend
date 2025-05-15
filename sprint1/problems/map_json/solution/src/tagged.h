@@ -1,5 +1,6 @@
 #pragma once
 #include <compare>
+#include <iostream>
 
 namespace util {
 
@@ -44,6 +45,12 @@ public:
 
     Value& operator*() {
         return value_;
+    }
+
+    // Добавляем явный оператор равенства
+    bool operator==(const Tagged& other) const {
+        std::cerr << "Comparing Tagged values: '" << value_ << "' == '" << other.value_ << "'" << std::endl;
+        return value_ == other.value_;
     }
 
     // Так в C++20 можно объявить оператор сравнения Tagged-типов

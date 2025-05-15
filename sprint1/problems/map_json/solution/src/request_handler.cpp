@@ -1,19 +1,21 @@
+// src/request_handler.cpp
 #include "request_handler.h"
 #include <boost/json.hpp>
 #include <string>
 #include <string_view>
-#include <iostream>
+#include <iostream> // Раскомментируйте для отладки, если потребуется
+#include <iomanip>
 
 namespace http_handler {
 
-namespace beast = boost::beast;
-namespace http = beast::http;
-namespace json = boost::json;
+// Псевдонимы beast, http и json уже определены в заголовке через пространство имён http_handler
 
-http::response<http::string_body> RequestHandler::MakeErrorResponse(http::status status, beast::string_view code, beast::string_view message) {
-    http::response<http::string_body> res{status, 11};
+http::response<http::string_body> RequestHandler::MakeErrorResponse(
+    http::status status, beast::string_view code, beast::string_view message,
+    unsigned http_version, bool keep_alive) {
+    http::response<http::string_body> res{status, http_version};
     res.set(http::field::content_type, "application/json");
-    res.keep_alive(true);
+    res.keep_alive(keep_alive); // Используем флаг keep_alive из запроса
     
     json::object error;
     error["code"] = code;
@@ -24,44 +26,65 @@ http::response<http::string_body> RequestHandler::MakeErrorResponse(http::status
     return res;
 }
 
-http::response<http::string_body> RequestHandler::MakeSuccessResponse(http::status status, const json::value& body) {
-    http::response<http::string_body> res{status, 11};
+http::response<http::string_body> RequestHandler::MakeSuccessResponse(
+    http::status status, const json::value& body,
+    unsigned http_version, bool keep_alive) {
+    http::response<http::string_body> res{status, http_version};
     res.set(http::field::content_type, "application/json");
-    res.keep_alive(true);
+    res.keep_alive(keep_alive); // Используем флаг keep_alive из запроса
     
     res.body() = json::serialize(body);
     res.prepare_payload();
     return res;
 }
 
-void RequestHandler::HandleGetMaps() {
-    json::array maps;
-    for (const auto& map : game_.GetMaps()) {
+// Метод теперь принимает константную ссылку на запрос и ссылку на колбэк
+void RequestHandler::HandleGetMaps(const http::request<http::string_body>& req, StringResponseSendCallback& sender) {
+    json::array maps_json_array;
+    // Переименовал map в map_item, чтобы избежать возможного конфликта имен, если req содержит поле map
+    for (const auto& map_item : game_.GetMaps()) { 
         json::object map_obj;
-        map_obj["id"] = *map.GetId();
-        map_obj["name"] = map.GetName();
-        maps.push_back(std::move(map_obj));
+        map_obj["id"] = *map_item.GetId();
+        map_obj["name"] = map_item.GetName();
+        maps_json_array.push_back(std::move(map_obj));
     }
     
-    send_(MakeSuccessResponse(http::status::ok, maps));
+    // Используем версию HTTP и флаг keep_alive из переданного запроса
+    sender(MakeSuccessResponse(http::status::ok, maps_json_array, req.version(), req.keep_alive()));
 }
 
-void RequestHandler::HandleGetMap(beast::string_view id) {
-    std::cerr << "Looking for map with id: " << id << std::endl;
-    std::cerr << "Available maps:" << std::endl;
+// Метод теперь принимает константную ссылку на запрос, ссылку на колбэк и ID карты
+void RequestHandler::HandleGetMap(const http::request<http::string_body>& req, StringResponseSendCallback& sender, beast::string_view id_sv) {
+    // Debug output
+    std::cerr << "Requested map id: '" << id_sv << "' (length: " << id_sv.length() << ")\n";
+    std::cerr << "Requested map id bytes: ";
+    for (char c : id_sv) {
+        std::cerr << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(static_cast<unsigned char>(c)) << " ";
+    }
+    std::cerr << std::dec << "\n";
+    
+    std::cerr << "Available map ids:\n";
     for (const auto& map : game_.GetMaps()) {
-        std::cerr << "  - " << *map.GetId() << std::endl;
+        const auto& id = *map.GetId();
+        std::cerr << "  '" << id << "' (length: " << id.length() << ")\n";
+        std::cerr << "  bytes: ";
+        for (char c : id) {
+            std::cerr << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(static_cast<unsigned char>(c)) << " ";
+        }
+        std::cerr << std::dec << "\n";
     }
     
-    if (auto map = game_.FindMap(model::Map::Id{std::string(id)})) {
-        std::cerr << "Found map: " << *map->GetId() << std::endl;
+    // Конструируем Map::Id из string_view
+    model::Map::Id map_id_to_find{std::string(id_sv)};
+    
+    // Ищем карту по ID
+    if (auto map_ptr = game_.FindMap(map_id_to_find)) {
         json::object map_obj;
-        map_obj["id"] = *map->GetId();
-        map_obj["name"] = map->GetName();
+        map_obj["id"] = *map_ptr->GetId();
+        map_obj["name"] = map_ptr->GetName();
         
-        // Add roads
-        json::array roads;
-        for (const auto& road : map->GetRoads()) {
+        json::array roads_json; // Переименовал, чтобы не конфликтовать с map_ptr->GetRoads()
+        for (const auto& road : map_ptr->GetRoads()) {
             json::object road_obj;
             auto start = road.GetStart();
             auto end = road.GetEnd();
@@ -72,26 +95,24 @@ void RequestHandler::HandleGetMap(beast::string_view id) {
             } else {
                 road_obj["y1"] = end.y;
             }
-            roads.push_back(std::move(road_obj));
+            roads_json.push_back(std::move(road_obj));
         }
-        map_obj["roads"] = std::move(roads);
+        map_obj["roads"] = std::move(roads_json);
         
-        // Add buildings
-        json::array buildings;
-        for (const auto& building : map->GetBuildings()) {
+        json::array buildings_json; // Переименовал
+        for (const auto& building : map_ptr->GetBuildings()) {
             json::object building_obj;
             auto bounds = building.GetBounds();
             building_obj["x"] = bounds.position.x;
             building_obj["y"] = bounds.position.y;
             building_obj["w"] = bounds.size.width;
             building_obj["h"] = bounds.size.height;
-            buildings.push_back(std::move(building_obj));
+            buildings_json.push_back(std::move(building_obj));
         }
-        map_obj["buildings"] = std::move(buildings);
+        map_obj["buildings"] = std::move(buildings_json);
         
-        // Add offices
-        json::array offices;
-        for (const auto& office : map->GetOffices()) {
+        json::array offices_json; // Переименовал
+        for (const auto& office : map_ptr->GetOffices()) {
             json::object office_obj;
             office_obj["id"] = *office.GetId();
             auto pos = office.GetPosition();
@@ -100,14 +121,14 @@ void RequestHandler::HandleGetMap(beast::string_view id) {
             auto offset = office.GetOffset();
             office_obj["offsetX"] = offset.dx;
             office_obj["offsetY"] = offset.dy;
-            offices.push_back(std::move(office_obj));
+            offices_json.push_back(std::move(office_obj));
         }
-        map_obj["offices"] = std::move(offices);
+        map_obj["offices"] = std::move(offices_json);
         
-        send_(MakeSuccessResponse(http::status::ok, map_obj));
+        sender(MakeSuccessResponse(http::status::ok, map_obj, req.version(), req.keep_alive()));
     } else {
-        std::cerr << "Map not found" << std::endl;
-        send_(MakeErrorResponse(http::status::not_found, "mapNotFound", "Map not found"));
+        // Карта не найдена
+        sender(MakeErrorResponse(http::status::not_found, "mapNotFound", "Map not found", req.version(), req.keep_alive()));
     }
 }
 

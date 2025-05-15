@@ -1,3 +1,4 @@
+// src/main.cpp
 #include "sdk.h"
 //
 #include <boost/asio/io_context.hpp>
@@ -60,7 +61,8 @@ int main(int argc, const char* argv[]) {
         });
 
         // 6. Запускаем обработку асинхронных операций
-        std::cout << "Server has started..."sv << std::endl; // FIXED
+        // ИЗМЕНЕНО: Сообщение о старте сервера для тестов
+        std::cout << "Server has started..."sv << std::endl;
         RunWorkers(num_threads, [&ioc] {
             ioc.run();
         });
