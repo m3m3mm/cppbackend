@@ -9,12 +9,6 @@ RUN apt update && \
     && \
     pip3 install conan==1.*
 
-# ускорил (с помощью внешних источников)
-RUN conan config init --force && \
-    conan config set general.revisions_enabled=1 && \
-    conan config set general.parallel_download=8 && \
-    conan config set general.parallel_build=8
-
 # копируем для докера
 COPY conanfile.txt /app/
 RUN mkdir /app/build && cd /app/build && \
