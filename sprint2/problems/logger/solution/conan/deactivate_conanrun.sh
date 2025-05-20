@@ -1,0 +1,1 @@
+. "/home/m3m3mm/cppbackend/sprint2/problems/logger/solution/deactivate_conanrunenv-release-armv8.sh"

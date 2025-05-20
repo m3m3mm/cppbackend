@@ -9,7 +9,6 @@
 #include <optional>
 #include <mutex>
 #include <thread>
-#include <filesystem>
 
 using namespace std::literals;
 
@@ -20,6 +19,7 @@ class Logger {
         if (manual_ts_) {
             return *manual_ts_;
         }
+
         return std::chrono::system_clock::now();
     }
 
@@ -37,27 +37,14 @@ class Logger {
         return ss.str();
     }
 
-    std::string GetLogFilePath() const {
-        return "/var/log/sample_log_" + GetFileTimeStamp() + ".log";
+    void OpenLogFile() {
+        std::string filename = "/var/log/sample_log_" + GetFileTimeStamp() + ".log";
+        log_file_.open(filename, std::ios::app);
     }
 
-    void EnsureFileOpen() {
-        std::string current_path = GetLogFilePath();
-        if (!log_file_.is_open() || current_path != current_file_path_) {
-            if (log_file_.is_open()) {
-                log_file_.close();
-            }
-            // Truncate if file does not exist, otherwise append
-            std::ios_base::openmode mode = std::ios::app;
-            if (!std::filesystem::exists(current_path)) {
-                mode = std::ios::trunc;
-            }
-            log_file_.open(current_path, mode);
-            current_file_path_ = current_path;
-        }
+    Logger() {
+        OpenLogFile();
     }
-
-    Logger() = default;
     Logger(const Logger&) = delete;
 
 public:
@@ -69,10 +56,21 @@ public:
     template<class... Ts>
     void Log(const Ts&... args) {
         std::lock_guard<std::mutex> lock(mutex_);
-        EnsureFileOpen();
         
+        // Check if we need to open a new file
+        std::string current_date = GetFileTimeStamp();
+        if (current_date != last_date_) {
+            log_file_.close();
+            OpenLogFile();
+            last_date_ = current_date;
+        }
+
+        // Write timestamp
         log_file_ << GetTimeStamp() << ": ";
+        
+        // Write all arguments
         ((log_file_ << args), ...);
+        
         log_file_ << std::endl;
         log_file_.flush();
     }
@@ -80,16 +78,11 @@ public:
     void SetTimestamp(std::chrono::system_clock::time_point ts) {
         std::lock_guard<std::mutex> lock(mutex_);
         manual_ts_ = ts;
-        // Force file reopen on timestamp change to ensure proper date handling
-        if (log_file_.is_open()) {
-            log_file_.close();
-            current_file_path_.clear();
-        }
     }
 
 private:
     std::optional<std::chrono::system_clock::time_point> manual_ts_;
     std::ofstream log_file_;
-    std::string current_file_path_;
     std::mutex mutex_;
+    std::string last_date_ = GetFileTimeStamp();
 };
