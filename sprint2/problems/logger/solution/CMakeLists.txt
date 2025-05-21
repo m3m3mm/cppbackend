@@ -11,6 +11,7 @@ add_executable(hello_log main.cpp)
 set_target_properties(hello_log PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 target_link_libraries(hello_log PRIVATE 
-    Boost::boost
+    Boost::system
+    Boost::filesystem
     stdc++fs
 )
