@@ -9,6 +9,8 @@
 #include <optional>
 #include <mutex>
 #include <thread>
+#include <filesystem>
+#include <stdexcept>
 
 using namespace std::literals;
 
@@ -19,7 +21,6 @@ class Logger {
         if (manual_ts_) {
             return *manual_ts_;
         }
-
         return std::chrono::system_clock::now();
     }
 
@@ -38,19 +39,43 @@ class Logger {
     }
 
     void OpenLogFile() {
-        std::string filename = "/var/log/sample_log_" + GetFileTimeStamp() + ".log";
-        log_file_.open(filename, std::ios::app);
+        std::string filename = "sample_log_" + GetFileTimeStamp() + ".log";
+        std::string dir = GetLogDir();
+        std::filesystem::create_directories(dir);
+        std::string fullpath = dir + "/" + filename;
+        log_file_.open(fullpath, std::ios::app);
+        if (!log_file_.is_open()) {
+            throw std::runtime_error("Failed to open log file: " + fullpath);
+        }
     }
 
     Logger() {
         OpenLogFile();
     }
+
+    ~Logger() {
+        if (log_file_.is_open()) {
+            log_file_.close();
+        }
+    }
+
     Logger(const Logger&) = delete;
+    Logger& operator=(const Logger&) = delete;
 
 public:
     static Logger& GetInstance() {
         static Logger obj;
         return obj;
+    }
+
+    static void SetLogDir(const std::string& dir) {
+        std::lock_guard<std::mutex> lock(log_dir_mutex_);
+        log_dir_ = dir;
+    }
+
+    static std::string GetLogDir() {
+        std::lock_guard<std::mutex> lock(log_dir_mutex_);
+        return log_dir_.empty() ? "/var/log" : log_dir_;
     }
 
     template<class... Ts>
@@ -60,7 +85,9 @@ public:
         // Check if we need to open a new file
         std::string current_date = GetFileTimeStamp();
         if (current_date != last_date_) {
-            log_file_.close();
+            if (log_file_.is_open()) {
+                log_file_.close();
+            }
             OpenLogFile();
             last_date_ = current_date;
         }
@@ -73,6 +100,10 @@ public:
         
         log_file_ << std::endl;
         log_file_.flush();
+
+        if (log_file_.fail()) {
+            throw std::runtime_error("Failed to write to log file");
+        }
     }
 
     void SetTimestamp(std::chrono::system_clock::time_point ts) {
@@ -85,4 +116,10 @@ private:
     std::ofstream log_file_;
     std::mutex mutex_;
     std::string last_date_ = GetFileTimeStamp();
+    static std::string log_dir_;
+    static std::mutex log_dir_mutex_;
 };
+
+// Static members definition
+inline std::string Logger::log_dir_ = "";
+inline std::mutex Logger::log_dir_mutex_;
