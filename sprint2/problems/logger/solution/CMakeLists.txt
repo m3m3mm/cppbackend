@@ -3,7 +3,8 @@ project(HelloLog CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Boost 1.78.0 REQUIRED)
+# Use Conan's Boost package
+find_package(Boost 1.78.0 REQUIRED COMPONENTS system filesystem)
 
 add_executable(hello_log main.cpp)
 
