@@ -40,8 +40,8 @@ class Logger {
 
     void OpenLogFile() {
         std::string filename = "sample_log_" + GetFileTimeStamp() + ".log";
-        std::filesystem::create_directories("logs");
-        std::string fullpath = "logs/" + filename;
+        std::filesystem::create_directories(GetLogDir());
+        std::string fullpath = GetLogDir() + "/" + filename;
         log_file_.open(fullpath, std::ios::app);
         if (!log_file_.is_open()) {
             throw std::runtime_error("Failed to open log file: " + fullpath);

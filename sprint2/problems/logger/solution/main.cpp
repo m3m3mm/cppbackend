@@ -51,13 +51,13 @@ bool CompareFiles(const std::filesystem::path& file_path, const std::filesystem:
 }
 
 int main() {
+    Logger::SetLogDir("/var/log");
     const std::filesystem::path logs_path("/var/log");
-    const std::filesystem::path reference_path = std::filesystem::current_path() / std::filesystem::path("cpp-backend-tests-practicum/tests/cpp/test_s02_logger/reference");
+    const std::filesystem::path reference_path = std::filesystem::current_path() / "reference";
 
     Logger::GetInstance().SetTimestamp(std::chrono::system_clock::time_point{1000000s});
     LOG("Hello "sv, "world "s, 123);
     LOG(1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0,
         1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0);
 
     Logger::GetInstance().SetTimestamp(std::chrono::system_clock::time_point{10000000s});
