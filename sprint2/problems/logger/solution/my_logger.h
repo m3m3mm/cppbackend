@@ -85,7 +85,7 @@ public:
         std::string current_date = GetFileTimeStamp();
         if (current_date != last_date_) {
             if (log_file_.is_open()) {
-                log_file_.close();
+            log_file_.close();
             }
             OpenLogFile();
             last_date_ = current_date;
