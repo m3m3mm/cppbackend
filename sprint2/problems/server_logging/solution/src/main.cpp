@@ -373,6 +373,7 @@ int main() {
 
         // Log that server is ready to accept connections
         log_json("server listening and ready", start_data);
+        std::cout << std::flush;
 
         // Start accepting connections
         do_accept(acceptor);
