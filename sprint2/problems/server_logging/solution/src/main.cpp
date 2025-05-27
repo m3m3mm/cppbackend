@@ -378,19 +378,16 @@ int main() {
         do_accept(acceptor);
 
         // Run the event loop
-        BOOST_LOG_TRIVIAL(info) << "Server event loop starting";
         ioc.run();
-        BOOST_LOG_TRIVIAL(info) << "Server event loop finished";
+        log_json("server event loop finished", {});
 
         log_json("server exited cleanly", {{"code", 0}});
         return 0;
     } catch (const std::exception& e) {
-        BOOST_LOG_TRIVIAL(fatal) << "Main exception: " << e.what();
         log_json("error", {{"code", 1}, {"text", e.what()}, {"where", "main_exception"}});
         log_json("server exited with exception", {{"code", 1}, {"exception", e.what()}});
         return 1;
     } catch (...) {
-        BOOST_LOG_TRIVIAL(fatal) << "Unknown exception in main";
         log_json("error", {{"text", "Unknown exception in main"}, {"where", "main_unknown_exception"}});
         log_json("server exited with unknown exception", {{"code", 2}, {"exception", "Unknown exception type"}});
         return 2;
