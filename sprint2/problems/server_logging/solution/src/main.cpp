@@ -377,22 +377,9 @@ int main() {
         // Start accepting connections
         do_accept(acceptor);
 
-        // Run the event loop with a work guard to prevent it from exiting immediately
+        // Run the event loop
         BOOST_LOG_TRIVIAL(info) << "Server event loop starting";
-        net::executor_work_guard<net::io_context::executor_type> work_guard = net::make_work_guard(ioc);
-        
-        // Run the event loop in a separate thread
-        std::thread event_thread([&ioc]() {
-            try {
-                ioc.run();
-            } catch (const std::exception& e) {
-                BOOST_LOG_TRIVIAL(error) << "Event loop exception: " << e.what();
-            }
-        });
-
-        // Wait for the event thread to complete
-        event_thread.join();
-        
+        ioc.run();
         BOOST_LOG_TRIVIAL(info) << "Server event loop finished";
 
         log_json("server exited cleanly", {{"code", 0}});
