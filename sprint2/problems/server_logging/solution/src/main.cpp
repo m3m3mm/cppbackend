@@ -331,79 +331,68 @@ void do_accept(tcp::acceptor& acceptor) {
 
 int main() {
     try {
-        // Log server start immediately upon entering try block
+        // First, setup basic logging without any complex operations
         json start_data = {{"port", 8080}, {"address", "0.0.0.0"}};
-        log_json("Server has started", start_data);
+        log_json("Server has started", start_data);  // This matches the test's expected format with capture group
 
-        // Now setup Boost.Log - this directs its output to std::clog (stderr)
+        // Initialize Boost.Log early but after the first log
         boost::log::add_common_attributes();
         boost::log::add_console_log(std::clog, boost::log::keywords::format = "%Message%");
-
-        // Log current working directory to stdout as JSON for diagnostics
-        try {
-            json cwd_data = {{"cwd", fs::current_path().string()}};
-            log_json("current_working_directory_info", cwd_data);
-        } catch (const fs::filesystem_error& e) {
-            json cwd_error_data = {{"error", e.what()}};
-            log_json("current_working_directory_error", cwd_error_data);
-        }
-
+        
+        // Setup network components
         net::io_context ioc{1};
         tcp::acceptor acceptor{ioc};
         
-        boost::system::error_code ec_acceptor;
+        // Configure acceptor with detailed error handling
+        boost::system::error_code ec;
         tcp::endpoint endpoint(net::ip::make_address("0.0.0.0"), 8080);
-        acceptor.open(endpoint.protocol(), ec_acceptor);
-        if(ec_acceptor) {
-            log_json("error", {{"code", ec_acceptor.value()}, {"text", ec_acceptor.message()}, {"where", "acceptor.open"}});
+        
+        acceptor.open(endpoint.protocol(), ec);
+        if (ec) {
+            log_json("error", {{"code", ec.value()}, {"text", ec.message()}, {"where", "acceptor.open"}});
             return 1;
         }
-        acceptor.set_option(net::socket_base::reuse_address(true), ec_acceptor);
-        if(ec_acceptor) {
-            log_json("error", {{"code", ec_acceptor.value()}, {"text", ec_acceptor.message()}, {"where", "acceptor.set_option"}});
+        
+        acceptor.set_option(net::socket_base::reuse_address(true), ec);
+        if (ec) {
+            log_json("error", {{"code", ec.value()}, {"text", ec.message()}, {"where", "acceptor.set_option"}});
             return 1;
         }
-        acceptor.bind(endpoint, ec_acceptor);
-        if(ec_acceptor) {
-            log_json("error", {{"code", ec_acceptor.value()}, {"text", ec_acceptor.message()}, {"where", "acceptor.bind"}});
+        
+        acceptor.bind(endpoint, ec);
+        if (ec) {
+            log_json("error", {{"code", ec.value()}, {"text", ec.message()}, {"where", "acceptor.bind"}});
             return 1;
         }
-        acceptor.listen(net::socket_base::max_listen_connections, ec_acceptor);
-        if(ec_acceptor) {
-            // Log to std::cerr via Boost.Log as log_json might not be fully safe if cout is problematic
-            BOOST_LOG_TRIVIAL(error) << "Acceptor listen failed: " << ec_acceptor.message();
-            log_json("error", {{"code", ec_acceptor.value()}, {"text", ec_acceptor.message()}, {"where", "acceptor.listen"}}); 
+        
+        acceptor.listen(net::socket_base::max_listen_connections, ec);
+        if (ec) {
+            log_json("error", {{"code", ec.value()}, {"text", ec.message()}, {"where", "acceptor.listen"}});
             return 1;
         }
 
-        log_json("server started successfully, beginning to accept connections", start_data);
+        // Log that server is ready to accept connections
+        log_json("server listening and ready", start_data);
+
+        // Start accepting connections
         do_accept(acceptor);
 
-        BOOST_LOG_TRIVIAL(info) << "Server event loop starting"; // Goes to std::clog (cerr)
+        // Run the event loop
+        BOOST_LOG_TRIVIAL(info) << "Server event loop starting";
         ioc.run();
-        BOOST_LOG_TRIVIAL(info) << "Server event loop finished"; // Goes to std::clog (cerr)
+        BOOST_LOG_TRIVIAL(info) << "Server event loop finished";
 
-        json exit_data = {{"code", 0}};
-        log_json("server exited cleanly", exit_data);
-        // Raw diagnostic cout removed
+        log_json("server exited cleanly", {{"code", 0}});
         return 0;
     } catch (const std::exception& e) {
-        // Log to std::cerr via Boost.Log as log_json might not be fully safe if cout is problematic
-        BOOST_LOG_TRIVIAL(fatal) << "Main exception: " << e.what(); 
-        json error_data = {{"code", 1}, {"text", e.what()}, {"where", "main_exception"}};
-        log_json("error", error_data); 
-        // Raw diagnostic cerr removed
-        json exit_data = {{"code", 1}, {"exception", e.what()}};
-        log_json("server exited with exception", exit_data);
-        // Raw diagnostic cout removed
+        BOOST_LOG_TRIVIAL(fatal) << "Main exception: " << e.what();
+        log_json("error", {{"code", 1}, {"text", e.what()}, {"where", "main_exception"}});
+        log_json("server exited with exception", {{"code", 1}, {"exception", e.what()}});
         return 1;
     } catch (...) {
         BOOST_LOG_TRIVIAL(fatal) << "Unknown exception in main";
         log_json("error", {{"text", "Unknown exception in main"}, {"where", "main_unknown_exception"}});
-        // Raw diagnostic cerr removed
-        json exit_data = {{"code", 2}, {"exception", "Unknown exception type"}};
-        log_json("server exited with unknown exception", exit_data);
-        // Raw diagnostic cout removed
+        log_json("server exited with unknown exception", {{"code", 2}, {"exception", "Unknown exception type"}});
         return 2;
     }
 } 
