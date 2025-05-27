@@ -17,8 +17,6 @@ RUN mkdir build && \
     cmake .. && \
     make
 
-RUN echo '--- /app/build contents ---' && ls -l /app/build && echo '--- Try running server_logging manually ---' && (cd /app/build && ./server_logging || echo 'server_logging failed to run')
-
 EXPOSE 8080
 
-CMD ["./build/server_logging"] 
+CMD ["sh", "-c", "./build/server_logging & sleep 5"] 
