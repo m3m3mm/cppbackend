@@ -1,111 +1,409 @@
-// src/main.cpp
-#include "sdk.h"
-//
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/signal_set.hpp>
-#include <iostream>
-#include <thread>
-
-#include "json_loader.h"
-#include "request_handler.h"
-#include "logging.h"
-#include "logging_request_handler.h"
-#include "model.h"
-#include "http_server.h"
-#include <boost/asio/ip/tcp.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
+#include <boost/beast/version.hpp>
+#include <boost/asio.hpp>
+#include <boost/log/trivial.hpp>
+#include <boost/log/utility/setup/common_attributes.hpp>
+#include <boost/log/utility/setup/console.hpp>
+#include <boost/filesystem.hpp>
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <thread>
+#include <memory>
+#include <iomanip>
+#include <sstream>
+#include "json.hpp"
+#include <mutex>
 
-using namespace std::literals;
+namespace beast = boost::beast;
+namespace http = beast::http;
 namespace net = boost::asio;
+namespace fs = boost::filesystem;
 using tcp = net::ip::tcp;
+using nlohmann::json;
 
-namespace {
+std::string get_iso_timestamp() {
+    using namespace std::chrono;
+    std::ostringstream ss;
+    try {
+        auto now = system_clock::now();
+        time_t itt = system_clock::to_time_t(now);
+        std::tm ptm_buf;
+        // Use gmtime_r or gmtime_s for thread-safety if available and needed, 
+        // but std::gmtime is often fine for single-threaded access or if locale isn't an issue.
+        // For this context, checking for nullptr is the main concern.
+        std::tm* ptm = std::gmtime(&itt); // In C++17, can use gmtime_r with a buffer if available
+                                      // For older standards or some compilers, gmtime might use a static buffer.
+                                      // However, the immediate issue is nullptr return.
+#ifdef _MSC_VER
+        // Visual Studio provides gmtime_s
+        if (gmtime_s(&ptm_buf, &itt) == 0) {
+            ptm = &ptm_buf;
+        } else {
+            ptm = nullptr;
+        }
+#else
+        // For GCC/Clang, gmtime_r is common, or check if std::gmtime is safe enough
+        // For simplicity here, just use std::gmtime and check for null.
+        // If thread safety for a static buffer used by gmtime becomes an issue later,
+        // this would need a mutex or thread-safe version like gmtime_r.
+        // ptm = gmtime_r(&itt, &ptm_buf); // if available & using C-style
+#endif
 
-// Run function fn on n threads, including the current one
-template <typename Fn>
-void RunWorkers(unsigned n, const Fn& fn) {
-    n = std::max(1u, n);
-    std::vector<std::jthread> workers;
-    workers.reserve(n - 1);
-    // Launch n-1 worker threads
-    while (--n) {
-        workers.emplace_back(fn);
+        if (ptm) {
+            ss << std::put_time(ptm, "%FT%T");
+            auto ms_duration = duration_cast<microseconds>(now.time_since_epoch()) % 1000000;
+            ss << '.' << std::setfill('0') << std::setw(6) << ms_duration.count();
+        } else {
+            ss << "1970-01-01T00:00:00.000000Z_GMTIME_FAILED"; 
+        }
+    } catch (const std::exception& e) {
+        // Clear stream state in case of partial writes before exception
+        ss.str(""); 
+        ss.clear(); 
+        ss << "1970-01-01T00:00:00.000000Z_TIMESTAMP_EXCEPTION:" << e.what();
+    } catch (...) {
+        ss.str("");
+        ss.clear();
+        ss << "1970-01-01T00:00:00.000000Z_UNKNOWN_TIMESTAMP_ERROR";
     }
-    fn();
+    return ss.str();
 }
 
-}  // namespace
+void log_json(const std::string& message, const json& data) {
+    json obj;
+    obj["timestamp"] = get_iso_timestamp();
+    obj["message"] = message;
+    obj["data"] = data;
+    std::cout << obj.dump() << std::endl << std::flush;
+}
 
-int main(int argc, char* argv[]) {
-    if (argc != 3) {
-        std::cerr << "Usage: " << argv[0] << " <config-file> <static-files-dir>" << std::endl;
-        return 1;
+std::string get_content_type(const std::string& path) {
+    if (path.length() >= 5 && path.substr(path.length() - 5) == ".html") return "text/html";
+    if (path.length() >= 4 && path.substr(path.length() - 4) == ".svg") return "image/svg+xml";
+    if (path.length() >= 3 && path.substr(path.length() - 3) == ".js") return "application/javascript";
+    if (path.length() >= 5 && path.substr(path.length() - 5) == ".json") return "application/json";
+    return "text/plain";
+}
+
+std::vector<json> g_maps;
+std::map<std::string, json> g_map_by_id;
+std::once_flag g_maps_loaded;
+
+void load_maps() {
+    std::ifstream config_file("data/config.json");
+    if (!config_file) return;
+    json config;
+    config_file >> config;
+    for (const auto& m : config["maps"]) {
+        g_maps.push_back({{"id", m["id"]}, {"name", m["name"]}});
+        g_map_by_id[m["id"]] = m;
+    }
+}
+
+class HttpSession : public std::enable_shared_from_this<HttpSession> {
+public:
+    HttpSession(tcp::socket socket)
+        : socket_(std::move(socket)) {}
+
+    void run() { read_request(); }
+
+private:
+    tcp::socket socket_;
+    beast::flat_buffer buffer_;
+    http::request<http::string_body> req_;
+    http::response<http::string_body> res_;
+    std::string client_ip_;
+
+    void read_request() {
+        try {
+            client_ip_ = socket_.remote_endpoint().address().to_string();
+            auto self = shared_from_this();
+            http::async_read(socket_, buffer_, req_,
+                [self](beast::error_code ec, std::size_t) {
+                    if (ec) {
+                        if (ec == beast::http::error::end_of_stream) {
+                            return self->do_close();
+                        }
+                        json error_data = {
+                            {"code", ec.value()},
+                            {"text", ec.message()},
+                            {"where", "read"}
+                        };
+                        log_json("error", error_data);
+                        return self->do_close();
+                    }
+                    self->process_request();
+                });
+        } catch (const std::exception& e) {
+            json error_data = {
+                {"code", 1},
+                {"text", e.what()},
+                {"where", "read"}
+            };
+            log_json("error", error_data);
+            do_close();
+        }
     }
 
-    try {
-        // Initialize logging
-        logging::InitLogging();
+    void do_close() {
+        beast::error_code ec;
+        socket_.shutdown(tcp::socket::shutdown_both, ec);
+        if (ec) {
+            json error_data = {
+                {"code", ec.value()},
+                {"text", ec.message()},
+                {"where", "shutdown_in_do_close"}
+            };
+            log_json("error", error_data);
+        }
+    }
 
-        // Load game model
-        model::Game game = json_loader::LoadGame(argv[1]);
+    void process_request() {
+        res_.result(http::status::internal_server_error);
+        res_.clear();
+        res_.version(req_.version());
+        res_.keep_alive(req_.keep_alive());
         
-        // Create request handler
-        http_handler::RequestHandler handler(game, argv[2]);
-        
-        // Create logging request handler
-        LoggingRequestHandler logging_handler(handler);
+        std::string current_request_uri = req_.target().to_string();
+        std::string current_request_method = req_.method_string().to_string();
+        auto start_time_point = std::chrono::steady_clock::now();
 
-        // Setup server
-        const unsigned num_threads = std::thread::hardware_concurrency();
-        net::io_context ioc(num_threads);
+        try {
+            std::call_once(g_maps_loaded, load_maps);
+            // Log request
+            json req_data = {
+                {"ip", client_ip_},
+                {"URI", current_request_uri},
+                {"method", current_request_method}
+            };
+            log_json("request received", req_data);
 
-        // Setup signal handling
-        net::signal_set signals(ioc, SIGINT, SIGTERM);
-        signals.async_wait([&ioc](const boost::system::error_code& ec, int signal_number) {
-            if (!ec) {
-                std::cout << "Received signal " << signal_number << ", shutting down..." << std::endl;
-                ioc.stop();
+            std::string target = req_.target().to_string();
+            bool handled = false;
+            if (target == "/info") {
+                res_.result(http::status::ok);
+                res_.set(http::field::content_type, "application/json");
+                json info = {{"name", "Static Content Server"}, {"version", "1.0"}, {"code", 200}};
+                res_.body() = info.dump();
+                handled = true;
+            } else if (target == "/api/v1/maps") {
+                res_.result(http::status::ok);
+                res_.set(http::field::content_type, "application/json");
+                res_.body() = json(g_maps).dump();
+                handled = true;
+            } else if (target.find("/api/v1/maps/") == 0) {
+                std::string map_id = target.substr(std::string("/api/v1/maps/").size());
+                if (g_map_by_id.count(map_id)) {
+                    res_.result(http::status::ok);
+                    res_.set(http::field::content_type, "application/json");
+                    res_.body() = g_map_by_id[map_id].dump();
+                } else {
+                    res_.result(http::status::not_found);
+                    res_.set(http::field::content_type, "application/json");
+                    json err = {{"code", "mapNotFound"}, {"message", "Map not found"}};
+                    res_.body() = err.dump();
+                }
+                handled = true;
+            } else if (target.find("/api/") == 0) {
+                res_.result(http::status::bad_request);
+                res_.set(http::field::content_type, "application/json");
+                json err = {{"code", "badRequest"}, {"message", "Bad request"}};
+                res_.body() = err.dump();
+                handled = true;
+            }
+            if (!handled) {
+                if (target == "/") target = "/index.html";
+                fs::path file_path = fs::current_path() / "static" / target.substr(1);
+                if (!fs::exists(file_path) || fs::is_directory(file_path)) {
+                    res_.result(http::status::not_found);
+                    res_.set(http::field::content_type, "text/plain");
+                    res_.body() = "File not found";
+                } else {
+                    std::ifstream file(file_path.string(), std::ios::in | std::ios::binary);
+                    if (!file) {
+                        res_.result(http::status::internal_server_error);
+                        res_.set(http::field::content_type, "text/plain");
+                        res_.body() = "Internal server error";
+                    } else {
+                        std::ostringstream ss;
+                        ss << file.rdbuf(); // This operation can throw std::ios_base::failure
+                        res_.result(http::status::ok);
+                        res_.set(http::field::content_type, get_content_type(file_path.string()));
+                        res_.body() = ss.str();
+                    }
+                }
+            }
+        } catch (const std::exception& e) {
+            // Log the internal error
+            json error_details = {
+                {"ip", client_ip_},
+                {"URI", current_request_uri},
+                {"method", current_request_method},
+                {"exception", e.what()},
+                {"where", "process_request"}
+            };
+            log_json("error", error_details);
+
+            // Prepare a 500 Internal Server Error response
+            res_.result(http::status::internal_server_error);
+            res_.set(http::field::content_type, "application/json");
+            json error_response_payload = {
+                {"code", "internalError"},
+                {"message", "An internal server error occurred."}
+            };
+            res_.body() = error_response_payload.dump();
+        } catch (...) { // Catch any other non-std::exception
+            json error_details = {
+                {"ip", client_ip_},
+                {"URI", current_request_uri},
+                {"method", current_request_method},
+                {"exception", "Unknown exception type"},
+                {"where", "process_request_unknown"}
+            };
+            log_json("error", error_details);
+
+            res_.result(http::status::internal_server_error);
+            res_.set(http::field::content_type, "application/json");
+            json error_response_payload = {
+                {"code", "internalError"},
+                {"message", "An unknown internal server error occurred."}
+            };
+            res_.body() = error_response_payload.dump();
+        }
+
+        res_.prepare_payload();
+
+        auto end_time_point = std::chrono::steady_clock::now();
+        auto response_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time_point - start_time_point).count();
+
+        // Log response sent
+        json final_res_data = {
+            {"ip", client_ip_},
+            {"response_time", response_time_ms},
+            {"code", res_.result_int()},
+            {"content_type", res_[http::field::content_type].to_string()}
+        };
+        log_json("response sent", final_res_data);
+
+        auto self = shared_from_this();
+        http::async_write(socket_, res_,
+            [self](beast::error_code ec, std::size_t) {
+                if (ec) {
+                    json error_data = {
+                        {"code", ec.value()},
+                        {"text", ec.message()},
+                        {"where", "write"}
+                    };
+                    log_json("error", error_data);
+                    return self->do_close();
+                }
+
+                if (!self->req_.keep_alive()) {
+                    return self->do_close();
+                }
+
+                self->buffer_.consume(self->buffer_.size());
+                self->read_request();
+            });
+    }
+};
+
+void do_accept(tcp::acceptor& acceptor) {
+    acceptor.async_accept(
+        [&acceptor](beast::error_code ec, tcp::socket socket) {
+            if (ec) {
+                json error_data = {
+                    {"code", ec.value()},
+                    {"text", ec.message()},
+                    {"where", "accept"}
+                };
+                log_json("error", error_data);
+            } else {
+                std::make_shared<HttpSession>(std::move(socket))->run();
+            }
+            if (acceptor.is_open()) {
+                 do_accept(acceptor);
             }
         });
+}
 
-        // Create and launch the listening port
-        auto address = net::ip::make_address("0.0.0.0");
-        unsigned short port = 8080;
+int main() {
+    try {
+        // Log server start immediately upon entering try block
+        json start_data = {{"port", 8080}, {"address", "0.0.0.0"}};
+        log_json("Server has started", start_data);
 
-        // Log server start
-        logging::LogServerStart(port, address.to_string());
+        // Now setup Boost.Log - this directs its output to std::clog (stderr)
+        boost::log::add_common_attributes();
+        boost::log::add_console_log(std::clog, boost::log::keywords::format = "%Message%");
 
-        // Create and launch the listening port
-        http_server::ServeHttp(ioc, tcp::endpoint(address, port), logging_handler);
+        // Log current working directory to stdout as JSON for diagnostics
+        try {
+            json cwd_data = {{"cwd", fs::current_path().string()}};
+            log_json("current_working_directory_info", cwd_data);
+        } catch (const fs::filesystem_error& e) {
+            json cwd_error_data = {{"error", e.what()}};
+            log_json("current_working_directory_error", cwd_error_data);
+        }
 
-        // Run the I/O service on the requested number of threads
-        std::vector<std::thread> v;
-        v.reserve(num_threads - 1);
-        for(auto i = num_threads - 1; i > 0; --i)
-            v.emplace_back(
-                [&ioc]
-                {
-                    ioc.run();
-                });
+        net::io_context ioc{1};
+        tcp::acceptor acceptor{ioc};
+        
+        boost::system::error_code ec_acceptor;
+        tcp::endpoint endpoint(net::ip::make_address("0.0.0.0"), 8080);
+        acceptor.open(endpoint.protocol(), ec_acceptor);
+        if(ec_acceptor) {
+            log_json("error", {{"code", ec_acceptor.value()}, {"text", ec_acceptor.message()}, {"where", "acceptor.open"}});
+            return 1;
+        }
+        acceptor.set_option(net::socket_base::reuse_address(true), ec_acceptor);
+        if(ec_acceptor) {
+            log_json("error", {{"code", ec_acceptor.value()}, {"text", ec_acceptor.message()}, {"where", "acceptor.set_option"}});
+            return 1;
+        }
+        acceptor.bind(endpoint, ec_acceptor);
+        if(ec_acceptor) {
+            log_json("error", {{"code", ec_acceptor.value()}, {"text", ec_acceptor.message()}, {"where", "acceptor.bind"}});
+            return 1;
+        }
+        acceptor.listen(net::socket_base::max_listen_connections, ec_acceptor);
+        if(ec_acceptor) {
+            // Log to std::cerr via Boost.Log as log_json might not be fully safe if cout is problematic
+            BOOST_LOG_TRIVIAL(error) << "Acceptor listen failed: " << ec_acceptor.message();
+            log_json("error", {{"code", ec_acceptor.value()}, {"text", ec_acceptor.message()}, {"where", "acceptor.listen"}}); 
+            return 1;
+        }
+
+        log_json("server started successfully, beginning to accept connections", start_data);
+        do_accept(acceptor);
+
+        BOOST_LOG_TRIVIAL(info) << "Server event loop starting"; // Goes to std::clog (cerr)
         ioc.run();
+        BOOST_LOG_TRIVIAL(info) << "Server event loop finished"; // Goes to std::clog (cerr)
 
-        // Block until all the threads exit
-        for(auto& t : v)
-            t.join();
-
-        // Log server stop
-        logging::LogServerStop(0);
-
+        json exit_data = {{"code", 0}};
+        log_json("server exited cleanly", exit_data);
+        // Raw diagnostic cout removed
+        return 0;
     } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-        logging::LogServerStop(1, &e);
+        // Log to std::cerr via Boost.Log as log_json might not be fully safe if cout is problematic
+        BOOST_LOG_TRIVIAL(fatal) << "Main exception: " << e.what(); 
+        json error_data = {{"code", 1}, {"text", e.what()}, {"where", "main_exception"}};
+        log_json("error", error_data); 
+        // Raw diagnostic cerr removed
+        json exit_data = {{"code", 1}, {"exception", e.what()}};
+        log_json("server exited with exception", exit_data);
+        // Raw diagnostic cout removed
         return 1;
     } catch (...) {
-        std::cerr << "Unknown error occurred" << std::endl;
-        logging::LogServerStop(1);
-        return 1;
+        BOOST_LOG_TRIVIAL(fatal) << "Unknown exception in main";
+        log_json("error", {{"text", "Unknown exception in main"}, {"where", "main_unknown_exception"}});
+        // Raw diagnostic cerr removed
+        json exit_data = {{"code", 2}, {"exception", "Unknown exception type"}};
+        log_json("server exited with unknown exception", exit_data);
+        // Raw diagnostic cout removed
+        return 2;
     }
-
-    return 0;
-}
+} 
