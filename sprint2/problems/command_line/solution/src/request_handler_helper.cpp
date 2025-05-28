@@ -2,8 +2,8 @@
 
 #define BOOST_BEAST_USE_STD_STRING_VIEW
 
-#include <boost/algorithm/string/classification.hpp> // Include boost::for is_any_of
-#include <boost/algorithm/string/split.hpp> // Include for boost::split
+#include <boost/algorithm/string/classification.hpp> // Для boost::is_any_of
+#include <boost/algorithm/string/split.hpp> // Для boost::split
 
 #include "logger.h"
 #include "json_helper.h"

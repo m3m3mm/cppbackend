@@ -7,24 +7,24 @@
 namespace model {
 
 Token PlayerTokens::AddPlayer(Player&& player) {
-    std::stringstream buf;
+    std::stringstream buffer;
 
-    auto first_part = generator1_();
-    auto second_part = generator2_();
-    buf << std::hex << first_part << second_part;
+    auto part1 = generator1_();
+    auto part2 = generator2_();
+    buffer << std::hex << part1 << part2;
 
-    std::string token_string;
-    token_string += buf.str();
-    while (token_string.size() < 32) {
-        token_string.insert(0, "0");
+    std::string token_str;
+    token_str += buffer.str();
+    while (token_str.size() < 32) {
+        token_str.insert(0, "0");
     }
-    // if (token_string.size() == 30) {
-    //     token_string.insert(0, "00");
-    // } else if (token_string.size() == 31) {
-    //     token_string.insert(0, "0");
+    // if (token_str.size() == 30) {
+    //     token_str.insert(0, "00");
+    // } else if (token_str.size() == 31) {
+    //     token_str.insert(0, "0");
     // }
 
-    auto result = Token(std::move(token_string));
+    auto result = Token(std::move(token_str));
     
     tokenToPlayer_.emplace(result, player.GetId());
     players_.emplace_back(std::move(player));

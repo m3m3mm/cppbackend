@@ -7,14 +7,14 @@
 namespace util {
 
 /**
- * Вспомогательный шаблонный класс "Маркированный тип".
- * С его помощью можно описать строгий тип на основе другого типа.
- * Пример:
+ * Универсальный шаблонный класс "Тип с меткой".
+ * Позволяет создавать строгие типы на основе других типов.
+ * Пример использования:
  *
- *  struct AddressTag{}; // метка типа для строки, хранящей адрес
+ *  struct AddressTag{}; // метка для строки-адреса
  *  using Address = util::Tagged<std::string, AddressTag>;
  *
- *  struct NameTag{}; // метка типа для строки, хранящей имя
+ *  struct NameTag{}; // метка для строки-имени
  *  using Name = util::Tagged<std::string, NameTag>;
  *
  *  struct Person {
@@ -26,7 +26,7 @@ namespace util {
  *  Address address{"4 Privet Drive, Little Whinging, Surrey, England"s};
  *
  * Person p1{name, address}; // OK
- * Person p2{address, name}; // Ошибка, Address и Name - разные типы
+ * Person p2{address, name}; // Ошибка, Address и Name — разные типы
  */
 template <typename Value, typename Tag>
 class Tagged {
@@ -49,15 +49,15 @@ public:
         return value_;
     }
 
-    // Так в C++20 можно объявить оператор сравнения Tagged-типов
-    // Будет просто вызван соответствующий оператор для поля value_
+    // В C++20 можно объявить оператор сравнения Tagged-типов
+    // Просто вызывается соответствующий оператор для value_
     auto operator<=>(const Tagged<Value, Tag>&) const = default;
 
 private:
     Value value_;
 };
 
-// Хешер для Tagged-типа, чтобы Tagged-объекты можно было хранить в unordered-контейнерах
+// Хеш-функция для Tagged-типа, чтобы объекты можно было хранить в unordered-контейнерах
 template <typename TaggedValue>
 struct TaggedHasher {
     size_t operator()(const TaggedValue& value) const {
