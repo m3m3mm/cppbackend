@@ -1,85 +1,95 @@
 #include "sdk.h"
 //
 #include <boost/asio/io_context.hpp>
-#include <boost/asio/signal_set.hpp>
 #include <iostream>
 #include <thread>
+#include <boost/asio/signal_set.hpp>
 
-#include "serde/json.h"
-#include "handlers/request_handler.h"
-#include "utils/thread.h"
-#include "logger/json.h"
-#include "app/app.h"
+#include "json_loader.h"
+#include "json_helper.h"
+#include "request_handler.h"
+#include "logger.h"
 
 using namespace std::literals;
 namespace net = boost::asio;
-namespace sys = boost::system;
-namespace logging = boost::log;
-namespace json = boost::json;
+namespace sys = http_server::sys;
+
+namespace {
+
+// Запускает функцию fn на n потоках, включая текущий
+template <typename Fn>
+void RunWorkers(unsigned workersCount, const Fn& fn) {
+    workersCount = std::max(1u, workersCount);
+
+    #ifdef __clang__
+        std::vector<std::thread> workers;
+    #else
+        std::vector<std::jthread> workers;
+    #endif
+
+    workers.reserve(workersCount - 1);
+    // Запускаем n-1 рабочих потоков, выполняющих функцию fn
+    while (--workersCount) {
+        workers.emplace_back(fn);
+    }
+    fn();
+
+    #ifdef __clang__
+        for (auto& worker : workers) {
+            worker.join();
+        }
+    #endif
+}
+
+}  // namespace
 
 int main(int argc, const char* argv[]) {
     if (argc != 3) {
-        std::cerr << "Usage: game_server <game-config-json> <static-files>"
-                  << std::endl;
+        std::cerr << "Usage: game_server <game-config-json>"sv << std::endl;
         return EXIT_FAILURE;
     }
     try {
-        logger::json::InitBoostLogFilter();
+        // 0. Инициализируем логгер
+        logger::InitBoostLogFilter();
 
-        const unsigned num_threads = std::thread::hardware_concurrency();
-        net::io_context io(num_threads);
+        // 1. Загружаем карту из файла и построить модель игры
+        //std::string path = "/Users/balovdmitry/Desktop/SB/cpp-backend-practicum/sprint1/problems/map_json/precode/data/config.json";
+        //model::Game game = json_loader::LoadGame(path);
+        model::Game game = json_loader::LoadGame(argv[1]);
 
-        app::Application app(io, serde::json::LoadGame(argv[1]));
+        // 2. Инициализируем io_context
+        const unsigned numThreads = std::thread::hardware_concurrency();
+        net::io_context ioc(numThreads);
 
-        net::signal_set signals(io, SIGINT, SIGTERM);
-        signals.async_wait([&io](
-                               const sys::error_code& ec,
-                               [[maybe_unused]] int signal_number
-                           ) {
+        // 3. Добавляем асинхронный обработчик сигналов SIGINT и SIGTERM
+        // Подписываемся на сигналы и при их получении завершаем работу сервера
+        net::signal_set signals(ioc, SIGINT, SIGTERM);
+        signals.async_wait([&ioc](const sys::error_code& ec, [[maybe_unused]] int signalNumber) {
             if (!ec) {
-                io.stop();
+                std::cout << "Signal "sv << signalNumber << " received"sv << std::endl;
+                ioc.stop();
             }
         });
 
-        auto handler = std::make_shared<handlers::RequestHandler>(app, argv[2]);
+        // 4. Создаём обработчик HTTP-запросов и связываем его с моделью игры
+        http_handler::RequestHandler handler{game, argv[2]};
 
+        // 5. Запустить обработчик HTTP-запросов, делегируя их обработчику запросов
         const auto address = net::ip::make_address("0.0.0.0");
         constexpr net::ip::port_type port = 8080;
-        web::ServeHttp(
-            io,
-            {address, port},
-            [&handler](auto&& req, auto&& send) {
-                (*handler
-                )(std::forward<decltype(req)>(req),
-                  std::forward<decltype(send)>(send));
-            }
-        );
+        http_server::ServeHttp(ioc, {address, port}, [&handler](auto&& req, auto&& send) {
+            handler(std::forward<decltype(req)>(req), std::forward<decltype(send)>(send));
+        });
+        
+        logger::LogJsonAndMessage(json_helper::CreateStartServerValue(port, address), "server has started");
 
-        BOOST_LOG_TRIVIAL(info) << logging::add_value(
-                                       logger::json::additional_data,
-                                       json::value {
-                                           {"port", port},
-                                           {"address", address.to_string()},
-                                       }
-                                   )
-                                << "Server has started...";
-
-        utils::RunWorkers(std::max(1u, num_threads), [&io] { io.run(); });
-
-        BOOST_LOG_TRIVIAL(info) << logging::add_value(
-                                       logger::json::additional_data,
-                                       json::value {{"code", 0}}
-                                   )
-                                << "server exited";
+        // 6. Запускаем обработку асинхронных операций
+        RunWorkers(std::max(1u, numThreads), [&ioc] {
+            ioc.run();
+        });
+        logger::LogJsonAndMessage(json_helper::CreateStopServerValue(EXIT_SUCCESS), "server exited");
     } catch (const std::exception& ex) {
-        BOOST_LOG_TRIVIAL(info) << logging::add_value(
-                                       logger::json::additional_data,
-                                       json::value {
-                                           {"code", EXIT_FAILURE},
-                                           {"exception", ex.what()},
-                                       }
-                                   )
-                                << "server exited";
+        logger::LogJsonAndMessage(json_helper::CreateStopServerValue(EXIT_FAILURE, ex.what()), "server exited");
         return EXIT_FAILURE;
     }
 }
