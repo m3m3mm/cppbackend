@@ -118,10 +118,10 @@ private:
 
     void read_request() {
         try {
-            client_ip_ = socket_.remote_endpoint().address().to_string();
-            auto self = shared_from_this();
-            http::async_read(socket_, buffer_, req_,
-                [self](beast::error_code ec, std::size_t) {
+        client_ip_ = socket_.remote_endpoint().address().to_string();
+        auto self = shared_from_this();
+        http::async_read(socket_, buffer_, req_,
+            [self](beast::error_code ec, std::size_t) {
                     if (ec) {
                         if (ec == beast::http::error::end_of_stream) {
                             return self->do_close();
@@ -135,7 +135,7 @@ private:
                         return self->do_close();
                     }
                     self->process_request();
-                });
+            });
         } catch (const std::exception& e) {
             json error_data = {
                 {"code", 1},
@@ -171,70 +171,70 @@ private:
         auto start_time_point = std::chrono::steady_clock::now();
 
         try {
-            std::call_once(g_maps_loaded, load_maps);
-            // Log request
-            json req_data = {
-                {"ip", client_ip_},
+        std::call_once(g_maps_loaded, load_maps);
+        // Log request
+        json req_data = {
+            {"ip", client_ip_},
                 {"URI", current_request_uri},
                 {"method", current_request_method}
-            };
-            log_json("request received", req_data);
+        };
+        log_json("request received", req_data);
 
-            std::string target = req_.target().to_string();
-            bool handled = false;
-            if (target == "/info") {
+        std::string target = req_.target().to_string();
+        bool handled = false;
+        if (target == "/info") {
                 res_.result(http::status::ok);
                 res_.set(http::field::content_type, "application/json");
-                json info = {{"name", "Static Content Server"}, {"version", "1.0"}, {"code", 200}};
+            json info = {{"name", "Static Content Server"}, {"version", "1.0"}, {"code", 200}};
                 res_.body() = info.dump();
-                handled = true;
-            } else if (target == "/api/v1/maps") {
+            handled = true;
+        } else if (target == "/api/v1/maps") {
                 res_.result(http::status::ok);
                 res_.set(http::field::content_type, "application/json");
                 res_.body() = json(g_maps).dump();
-                handled = true;
-            } else if (target.find("/api/v1/maps/") == 0) {
-                std::string map_id = target.substr(std::string("/api/v1/maps/").size());
-                if (g_map_by_id.count(map_id)) {
+            handled = true;
+        } else if (target.find("/api/v1/maps/") == 0) {
+            std::string map_id = target.substr(std::string("/api/v1/maps/").size());
+            if (g_map_by_id.count(map_id)) {
                     res_.result(http::status::ok);
                     res_.set(http::field::content_type, "application/json");
                     res_.body() = g_map_by_id[map_id].dump();
-                } else {
+            } else {
                     res_.result(http::status::not_found);
                     res_.set(http::field::content_type, "application/json");
-                    json err = {{"code", "mapNotFound"}, {"message", "Map not found"}};
+                json err = {{"code", "mapNotFound"}, {"message", "Map not found"}};
                     res_.body() = err.dump();
-                }
-                handled = true;
-            } else if (target.find("/api/") == 0) {
+            }
+            handled = true;
+        } else if (target.find("/api/") == 0) {
                 res_.result(http::status::bad_request);
                 res_.set(http::field::content_type, "application/json");
-                json err = {{"code", "badRequest"}, {"message", "Bad request"}};
+            json err = {{"code", "badRequest"}, {"message", "Bad request"}};
                 res_.body() = err.dump();
-                handled = true;
-            }
-            if (!handled) {
-                if (target == "/") target = "/index.html";
-                fs::path file_path = fs::current_path() / "static" / target.substr(1);
-                if (!fs::exists(file_path) || fs::is_directory(file_path)) {
+            handled = true;
+        }
+        if (!handled) {
+            if (target == "/") target = "/index.html";
+            fs::path file_path = fs::current_path() / "static" / target.substr(1);
+            if (!fs::exists(file_path) || fs::is_directory(file_path)) {
                     res_.result(http::status::not_found);
                     res_.set(http::field::content_type, "text/plain");
                     res_.body() = "File not found";
-                } else {
-                    std::ifstream file(file_path.string(), std::ios::in | std::ios::binary);
-                    if (!file) {
+            } else {
+                std::ifstream file(file_path.string(), std::ios::in | std::ios::binary);
+                if (!file) {
                         res_.result(http::status::internal_server_error);
                         res_.set(http::field::content_type, "text/plain");
                         res_.body() = "Internal server error";
-                    } else {
-                        std::ostringstream ss;
+                } else {
+                    std::ostringstream ss;
                         ss << file.rdbuf(); // This operation can throw std::ios_base::failure
                         res_.result(http::status::ok);
                         res_.set(http::field::content_type, get_content_type(file_path.string()));
                         res_.body() = ss.str();
-                    }
                 }
             }
+        }
         } catch (const std::exception& e) {
             // Log the internal error
             json error_details = {
@@ -324,21 +324,22 @@ void do_accept(tcp::acceptor& acceptor) {
                 std::make_shared<HttpSession>(std::move(socket))->run();
             }
             if (acceptor.is_open()) {
-                 do_accept(acceptor);
+            do_accept(acceptor);
             }
         });
 }
 
 int main() {
     try {
+        // Initialize Boost logger with auto_flush enabled
+        boost::log::add_common_attributes();
+        boost::log::core::get()->set_filter(boost::log::trivial::severity >= boost::log::trivial::info);
+        boost::log::add_console_log(std::cout, boost::log::keywords::auto_flush = true);
+
         // First, setup basic logging without any complex operations
         json start_data = {{"port", 8080}, {"address", "0.0.0.0"}};
         log_json("Server has started", start_data);  // This matches the test's expected format with capture group
 
-        // Initialize Boost.Log early but after the first log
-        boost::log::add_common_attributes();
-        boost::log::add_console_log(std::clog, boost::log::keywords::format = "%Message%");
-        
         // Setup network components
         net::io_context ioc{1};
         tcp::acceptor acceptor{ioc};
