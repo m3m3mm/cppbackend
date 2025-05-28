@@ -2,9 +2,6 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <optional>
-#include <iostream>
-#include <iomanip>
 
 #include "tagged.h"
 
@@ -14,11 +11,13 @@ using Dimension = int;
 using Coord = Dimension;
 
 struct Point {
-    Coord x, y;
+    Coord x;
+    Coord y;
 };
 
 struct Size {
-    Dimension width, height;
+    Dimension width;
+    Dimension height;
 };
 
 struct Rectangle {
@@ -27,7 +26,8 @@ struct Rectangle {
 };
 
 struct Offset {
-    Dimension dx, dy;
+    Dimension dx;
+    Dimension dy;
 };
 
 class Road {
@@ -39,19 +39,17 @@ class Road {
         explicit VerticalTag() = default;
     };
 
-public:
-    constexpr static HorizontalTag HORIZONTAL{};
-    constexpr static VerticalTag VERTICAL{};
+  public:
+    constexpr static HorizontalTag HORIZONTAL {};
+    constexpr static VerticalTag VERTICAL {};
 
-    Road(HorizontalTag, Point start, Coord end_x) noexcept
-        : start_{start}
-        , end_{end_x, start.y} {
-    }
+    Road(HorizontalTag, Point start, Coord end_x) noexcept :
+        start_ {start},
+        end_ {end_x, start.y} {}
 
-    Road(VerticalTag, Point start, Coord end_y) noexcept
-        : start_{start}
-        , end_{start.x, end_y} {
-    }
+    Road(VerticalTag, Point start, Coord end_y) noexcept :
+        start_ {start},
+        end_ {start.x, end_y} {}
 
     bool IsHorizontal() const noexcept {
         return start_.y == end_.y;
@@ -69,34 +67,31 @@ public:
         return end_;
     }
 
-private:
+  private:
     Point start_;
     Point end_;
 };
 
 class Building {
-public:
-    explicit Building(Rectangle bounds) noexcept
-        : bounds_{bounds} {
-    }
+  public:
+    explicit Building(Rectangle bounds) noexcept : bounds_ {bounds} {}
 
     const Rectangle& GetBounds() const noexcept {
         return bounds_;
     }
 
-private:
+  private:
     Rectangle bounds_;
 };
 
 class Office {
-public:
+  public:
     using Id = util::Tagged<std::string, Office>;
 
-    Office(Id id, Point position, Offset offset) noexcept
-        : id_{std::move(id)}
-        , position_{position}
-        , offset_{offset} {
-    }
+    Office(Id id, Point position, Offset offset) noexcept :
+        id_ {std::move(id)},
+        position_ {position},
+        offset_ {offset} {}
 
     const Id& GetId() const noexcept {
         return id_;
@@ -110,23 +105,22 @@ public:
         return offset_;
     }
 
-private:
+  private:
     Id id_;
     Point position_;
     Offset offset_;
 };
 
 class Map {
-public:
+  public:
     using Id = util::Tagged<std::string, Map>;
     using Roads = std::vector<Road>;
     using Buildings = std::vector<Building>;
     using Offices = std::vector<Office>;
 
-    Map(Id id, std::string name) noexcept
-        : id_{std::move(id)}
-        , name_{std::move(name)} {
-    }
+    Map(Id id, std::string name) noexcept :
+        id_(std::move(id)),
+        name_(std::move(name)) {}
 
     const Id& GetId() const noexcept {
         return id_;
@@ -158,8 +152,9 @@ public:
 
     void AddOffice(Office office);
 
-private:
-    using OfficeIdToIndex = std::unordered_map<Office::Id, size_t, util::TaggedHasher<Office::Id>>;
+  private:
+    using OfficeIdToIndex =
+        std::unordered_map<Office::Id, size_t, util::TaggedHasher<Office::Id>>;
 
     Id id_;
     std::string name_;
@@ -171,7 +166,7 @@ private:
 };
 
 class Game {
-public:
+  public:
     using Maps = std::vector<Map>;
 
     void AddMap(Map map);
@@ -181,31 +176,13 @@ public:
     }
 
     const Map* FindMap(const Map::Id& id) const noexcept {
-        // Debug output
-        std::cerr << "FindMap called with id: '" << *id << "' (length: " << (*id).length() << ")\n";
-        std::cerr << "FindMap id bytes: ";
-        for (char c : *id) {
-            std::cerr << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(static_cast<unsigned char>(c)) << " ";
-        }
-        std::cerr << std::dec << "\n";
-        
-        std::cerr << "Available maps in map_id_to_index_:\n";
-        for (const auto& [map_id, index] : map_id_to_index_) {
-            std::cerr << "  '" << *map_id << "' (length: " << (*map_id).length() << ")\n";
-            std::cerr << "  bytes: ";
-            for (char c : *map_id) {
-                std::cerr << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(static_cast<unsigned char>(c)) << " ";
-            }
-            std::cerr << std::dec << "\n";
-        }
-        
         if (auto it = map_id_to_index_.find(id); it != map_id_to_index_.end()) {
             return &maps_.at(it->second);
         }
         return nullptr;
     }
 
-private:
+  private:
     using MapIdHasher = util::TaggedHasher<Map::Id>;
     using MapIdToIndex = std::unordered_map<Map::Id, size_t, MapIdHasher>;
 

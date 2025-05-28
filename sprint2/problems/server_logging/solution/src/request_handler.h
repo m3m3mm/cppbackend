@@ -1,142 +1,253 @@
-// src/request_handler.h
 #pragma once
-#include "http_server.h" // Для http::request, http::response и псевдонима http_server::RequestHandler (std::function)
+#include "http_server.h"
+#include "json_serializer.h"
 #include "model.h"
-#include <functional>
-#include <boost/json.hpp>
+
+#include <boost/json/serialize.hpp>
+#include <boost/json/value.hpp>
+
 #include <filesystem>
-#include <fstream>
 #include <sstream>
-#include <unordered_map>
 
 namespace http_handler {
 namespace beast = boost::beast;
 namespace http = beast::http;
 namespace json = boost::json;
+namespace sys = boost::system;
+namespace logging = boost::log;
 namespace fs = std::filesystem;
 
-// Конкретный тип колбэка, используемый методами этого обработчика для отправки ответов
-using StringResponseSendCallback = std::function<void(http::response<http::string_body>&&)>;
+bool IsSubPath(fs::path path, fs::path base);
+
+struct ContentType {
+    ContentType() = delete;
+
+    struct text {
+        constexpr static std::string_view plain = "text/plain";
+        constexpr static std::string_view html = "text/html";
+        constexpr static std::string_view css = "text/css";
+        constexpr static std::string_view javascript = "text/javascript";
+    };
+
+    struct application {
+        constexpr static std::string_view json = "application/json";
+        constexpr static std::string_view xml = "application/xml";
+        constexpr static std::string_view octet_stream =
+            "application/octet-stream";
+    };
+
+    struct image {
+        constexpr static std::string_view png = "image/png";
+        constexpr static std::string_view jpeg = "image/jpeg";
+        constexpr static std::string_view gif = "image/gif";
+        constexpr static std::string_view bmp = "image/bmp";
+        constexpr static std::string_view icon = "image/vnd.microsoft.icon";
+        constexpr static std::string_view tiff = "image/tiff";
+        constexpr static std::string_view svg = "image/svg+xml";
+    };
+
+    struct audio {
+        constexpr static std::string_view mpeg = "audio/mpeg";
+    };
+};
+
+std::string_view GetMimeType(std::string_view path);
+
+std::string DecodeUrl(std::string_view url);
+
+template<typename Body, typename Allocator>
+using HttpRequest = http::request<Body, http::basic_fields<Allocator>>;
+
+template<typename Body, typename Allocator>
+using HttpResponse = http::response<Body, http::basic_fields<Allocator>>;
 
 class RequestHandler {
-public:
-    explicit RequestHandler(model::Game& game, const std::string& static_files_dir)
-        : game_{game}
-        , static_files_dir_{static_files_dir} {
-    }
+  public:
+    explicit RequestHandler(
+        model::Game& game,
+        std::string static_path,
+        std::string api_uri = "/api",
+        std::string maps_uri = "/v1/maps"
+    ) :
+        game_ {game},
+        static_path_(std::move(static_path)),
+        api_uri_(std::move(api_uri)),
+        maps_uri_(std::move(maps_uri)) {}
 
     RequestHandler(const RequestHandler&) = delete;
     RequestHandler& operator=(const RequestHandler&) = delete;
 
-    // operator() шаблонизирован для приёма конкретного типа колбэка отправки из http_server
-    template <typename Body, typename Allocator, typename Send>
-    void operator()(http::request<Body, http::basic_fields<Allocator>>&& req, Send&& send_cb) {
-        
-        const auto& target = req.target(); // Константная ссылка на target
-        const auto method = req.method();
-        unsigned http_version = req.version();
-        bool keep_alive = req.keep_alive();
+    using StringResponse = http::response<http::string_body>;
 
-        // Адаптируем общий Send&& send_cb к конкретному StringResponseSendCallback.
-        // Это позволяет HandleGetMaps/HandleGetMap иметь конкретную сигнатуру.
-        StringResponseSendCallback sender = std::forward<Send>(send_cb);
+    using FileResponse = http::response<http::file_body>;
 
-        // Предполагаем, что Body - это http::string_body, как используется в http_server.cpp.
-        // В данном проекте http_server использует http::string_body.
-        // Создаем константную ссылку на конкретный тип запроса, чтобы передавать ее дальше
-        // и избежать проблем с перемещением из req, если он нужен в нескольких ветках.
-        // Это важно, так как req (параметр) может быть rvalue-ссылкой, и мы не хотим его перемещать досрочно.
-        const auto& concrete_req_ref = static_cast<const http::request<http::string_body>&>(req);
-
-        // Normalize target to always start with a slash
-        std::string normalized_target = target.starts_with('/') ? std::string(target) : "/" + std::string(target);
-        beast::string_view norm_target_sv{normalized_target};
-
-        // Define the API prefix for map IDs
-        static const beast::string_view API_PREFIX = "/api/";
-        static const beast::string_view API_MAP_PREFIX = "/api/v1/maps/";
-        static const beast::string_view API_MAPS = "/api/v1/maps";
-
-        if (norm_target_sv.starts_with(API_PREFIX)) {
-            // Handle API requests
-            if (norm_target_sv == API_MAPS) {
-                if (method == http::verb::get) {
-                    HandleGetMaps(concrete_req_ref, sender);
-                } else {
-                    sender(MakeErrorResponse(http::status::method_not_allowed, "methodNotAllowed", "Method not allowed", http_version, keep_alive, false));
-                }
-            } else if (norm_target_sv.starts_with(API_MAP_PREFIX)) {
-                // Проверяем, что после префикса есть хотя бы один символ (ID карты не пустой)
-                if (norm_target_sv.size() > API_MAP_PREFIX.size()) {
-                    if (method == http::verb::get) {
-                        auto id_sv = norm_target_sv.substr(API_MAP_PREFIX.size());
-                        // Trim leading/trailing slashes
-                        while (!id_sv.empty() && id_sv.front() == '/') id_sv.remove_prefix(1);
-                        while (!id_sv.empty() && id_sv.back() == '/') id_sv.remove_suffix(1);
-                        HandleGetMap(concrete_req_ref, sender, id_sv);
-                    } else {
-                        sender(MakeErrorResponse(http::status::method_not_allowed, "methodNotAllowed", "Method not allowed", http_version, keep_alive, false));
-                    }
-                } else {
-                    sender(MakeErrorResponse(http::status::bad_request, "badRequest", "Bad request", http_version, keep_alive, false));
-                }
-            } else {
-                sender(MakeErrorResponse(http::status::bad_request, "badRequest", "Bad request", http_version, keep_alive, false));
-            }
+    template<typename Body, typename Allocator, typename Send>
+    void operator()(HttpRequest<Body, Allocator>&& req, Send&& send) {
+        if (req.target().starts_with(api_uri_)) {
+            return HandleApiRequest(std::move(req), std::forward<Send>(send));
         } else {
-            // Handle static file requests
-            if (method == http::verb::get || method == http::verb::head) {
-                HandleStaticFile(concrete_req_ref, sender, method == http::verb::head);
-            } else {
-                sender(MakeErrorResponse(http::status::method_not_allowed, "methodNotAllowed", "Method not allowed", http_version, keep_alive, false));
-            }
+            return HandleStaticRequest(
+                std::move(req),
+                std::forward<Send>(send)
+            );
         }
     }
 
-private:
-    // Вспомогательные методы теперь принимают константную ссылку на запрос и колбэк отправки
-    void HandleGetMaps(const http::request<http::string_body>& req, StringResponseSendCallback& sender);
-    
-    void HandleGetMap(const http::request<http::string_body>& req, StringResponseSendCallback& sender, beast::string_view id_sv);
+  private:
+    template<typename Body, typename Allocator, typename Send>
+    void HandleApiRequest(HttpRequest<Body, Allocator>&& req, Send&& send) {
+        const auto make_json_response = [&](http::status status,
+                                            std::string_view body) {
+            HttpResponse<Body, Allocator> res(status, req.version());
 
-    void HandleStaticFile(const http::request<http::string_body>& req, StringResponseSendCallback& sender, bool head_only);
+            res.set(http::field::content_type, ContentType::application::json);
+            res.body() = body;
+            res.prepare_payload();
+            res.keep_alive(req.keep_alive());
 
-    // Эти вспомогательные функции также нуждаются в версии HTTP и флаге keep_alive из запроса
-    http::response<http::string_body> MakeErrorResponse(
-        http::status status, beast::string_view code, beast::string_view message,
-        unsigned http_version, bool keep_alive, bool plain_text);
-    
-    http::response<http::string_body> MakeSuccessResponse(
-        http::status status, const json::value& body,
-        unsigned http_version, bool keep_alive);
+            return res;
+        };
 
-    std::string GetMimeType(const std::string& path);
-    std::string UrlDecode(const std::string& str);
-    bool IsPathTraversal(const std::string& path);
+        const auto handle_bad_request = [&](std::string_view message =
+                                                "Bad request") {
+            return send(make_json_response(
+                http::status::bad_request,
+                json::serialize(json::value {
+                    {"code", "badRequest"},
+                    {"message", message},
+                })
+            ));
+        };
 
-    model::Game& game_; // Ссылка на модель игры
-    std::string static_files_dir_;
-    std::unordered_map<std::string, std::string> mime_types_{
-        {".htm", "text/html"},
-        {".html", "text/html"},
-        {".css", "text/css"},
-        {".txt", "text/plain"},
-        {".js", "text/javascript"},
-        {".json", "application/json"},
-        {".xml", "application/xml"},
-        {".png", "image/png"},
-        {".jpg", "image/jpeg"},
-        {".jpe", "image/jpeg"},
-        {".jpeg", "image/jpeg"},
-        {".gif", "image/gif"},
-        {".bmp", "image/bmp"},
-        {".ico", "image/vnd.microsoft.icon"},
-        {".tiff", "image/tiff"},
-        {".tif", "image/tiff"},
-        {".svg", "image/svg+xml"},
-        {".svgz", "image/svg+xml"},
-        {".mp3", "audio/mpeg"}
-    };
+        const auto handle_map_info_request = [&](std::string map_id) {
+            using namespace std::literals;
+
+            const model::Map* map =
+                game_.FindMap(model::Map::Id(std::move(map_id)));
+
+            if (!map) {
+                return send(make_json_response(
+                    http::status::not_found,
+                    json::serialize(json::value {
+                        {"code", "mapNotFound"},
+                        {"message", "Map not found"},
+                    })
+                ));
+            }
+
+            return send(make_json_response(
+                http::status::ok,
+                json::serialize(json_serializer::SerializeMapInfo(*map))
+            ));
+        };
+
+        const auto handle_maps_list_request = [&]() {
+            return send(make_json_response(
+                http::status::ok,
+                json::serialize(
+                    json_serializer::SerializeMapsList(game_.GetMaps())
+                )
+            ));
+        };
+
+        if (req.method() != http::verb::get &&
+            req.method() != http::verb::head) {
+            return handle_bad_request(
+                "Server supports only GET and HEAD methods"
+            );
+        }
+
+        std::string_view target = req.target();
+        if (target.back() == '/') {
+            target.remove_suffix(1);
+        }
+
+        target.remove_prefix(api_uri_.size());
+
+        if (!target.starts_with(maps_uri_)) {
+            return handle_bad_request();
+        }
+
+        target.remove_prefix(maps_uri_.size());
+
+        if (target.empty()) {
+            return handle_maps_list_request();
+        }
+
+        if (target.front() != '/') {
+            return handle_bad_request();
+        }
+
+        target.remove_prefix(1);
+        return handle_map_info_request(std::string(target));
+    }
+
+    template<typename Body, typename Allocator, typename Send>
+    void HandleStaticRequest(HttpRequest<Body, Allocator>&& req, Send&& send) {
+        const auto make_string_response = [&](http::status status,
+                                              std::string_view body) {
+            StringResponse res(status, req.version());
+
+            res.set(http::field::content_type, ContentType::text::plain);
+            res.body() = body;
+            res.prepare_payload();
+            res.keep_alive(req.keep_alive());
+
+            return res;
+        };
+
+        const auto make_file_response = [&](http::status status,
+                                            http::file_body::value_type&& body,
+                                            std::string_view content_type) {
+            FileResponse res(status, req.version());
+
+            res.set(http::field::content_type, content_type);
+            if (req.method() == http::verb::get) {
+                res.body() = std::move(body);
+                res.prepare_payload();
+            } else {
+                res.content_length(body.size());
+            }
+            res.keep_alive(req.keep_alive());
+
+            return res;
+        };
+
+        const auto handle_bad_request = [&](std::string_view message) {
+            return send(make_string_response(http::status::bad_request, message)
+            );
+        };
+
+        const auto handle_not_found_request = [&](std::string_view message) {
+            return send(make_string_response(http::status::not_found, message));
+        };
+
+        fs::path path = static_path_ + DecodeUrl(req.target());
+        if (fs::is_directory(path)) {
+            path /= "index.html";
+        }
+
+        if (!IsSubPath(path, static_path_)) {
+            return handle_bad_request("Incorrect URL");
+        }
+
+        http::file_body::value_type file;
+        if (sys::error_code ec;
+            file.open(path.c_str(), beast::file_mode::read, ec), ec) {
+            return handle_not_found_request("This page does not exist");
+        }
+
+        return send(make_file_response(
+            http::status::ok,
+            std::move(file),
+            GetMimeType(path.c_str())
+        ));
+    }
+
+    model::Game& game_;
+    const std::string static_path_;
+    const std::string api_uri_;
+    const std::string maps_uri_;
 };
 
-} // namespace http_handler
+}  // namespace http_handler

@@ -1,116 +1,127 @@
 #include "json_loader.h"
-#include <fstream>
-#include <sstream>
-#include <iostream>
+
 #include <boost/json.hpp>
+#include <fstream>
+#include <iterator>
 
 namespace json_loader {
 
 namespace json = boost::json;
 
-model::Road ParseRoad(const json::object& road_obj) {
-    int x0 = static_cast<int>(road_obj.at("x0").as_int64());
-    int y0 = static_cast<int>(road_obj.at("y0").as_int64());
-    
-    if (road_obj.contains("x1")) {
-        // Horizontal road
-        int x1 = static_cast<int>(road_obj.at("x1").as_int64());
-        std::cerr << "  Adding horizontal road: (" << x0 << "," << y0 << ") -> (" << x1 << "," << y0 << ")\n";
-        return model::Road(
-            model::Road::HORIZONTAL,
-            model::Point{x0, y0},
-            x1
-        );
-    } else {
-        // Vertical road
-        int y1 = static_cast<int>(road_obj.at("y1").as_int64());
-        std::cerr << "  Adding vertical road: (" << x0 << "," << y0 << ") -> (" << x0 << "," << y1 << ")\n";
-        return model::Road(
-            model::Road::VERTICAL,
-            model::Point{x0, y0},
-            y1
+using namespace model;
+
+json::value LoadJson(const std::filesystem::path& json_path) {
+    std::ifstream json_file(json_path);
+
+    if (!json_file) {
+        throw std::runtime_error(
+            "Cannot open configuration file " + json_path.string()
         );
     }
-}
 
-model::Building ParseBuilding(const json::object& building_obj) {
-    int x = static_cast<int>(building_obj.at("x").as_int64());
-    int y = static_cast<int>(building_obj.at("y").as_int64());
-    int w = static_cast<int>(building_obj.at("w").as_int64());
-    int h = static_cast<int>(building_obj.at("h").as_int64());
-    std::cerr << "  Adding building: (" << x << "," << y << ") " << w << "x" << h << "\n";
-    return model::Building(model::Rectangle{
-        model::Point{x, y},
-        model::Size{w, h}
-    });
-}
-
-model::Office ParseOffice(const json::object& office_obj) {
-    std::string office_id = std::string(office_obj.at("id").as_string());
-    int x = static_cast<int>(office_obj.at("x").as_int64());
-    int y = static_cast<int>(office_obj.at("y").as_int64());
-    int offset_x = static_cast<int>(office_obj.at("offsetX").as_int64());
-    int offset_y = static_cast<int>(office_obj.at("offsetY").as_int64());
-    std::cerr << "  Adding office: id='" << office_id << "', pos=(" << x << "," << y << "), offset=(" << offset_x << "," << offset_y << ")\n";
-    return model::Office(
-        model::Office::Id{office_id},
-        model::Point{x, y},
-        model::Offset{offset_x, offset_y}
+    std::string json_string(
+        std::istreambuf_iterator<char>(json_file.rdbuf()),
+        std::istreambuf_iterator<char>()
     );
+
+    return json::parse(json_string);
 }
 
-void LoadMapObjects(model::Map& map, const json::object& map_obj) {
-    // Add roads
-    for (const auto& road_json : map_obj.at("roads").as_array()) {
-        map.AddRoad(ParseRoad(road_json.as_object()));
-    }
-    
-    // Add buildings
-    if (map_obj.contains("buildings")) {
-        for (const auto& building_json : map_obj.at("buildings").as_array()) {
-            map.AddBuilding(ParseBuilding(building_json.as_object()));
-        }
-    }
-    
-    // Add offices
-    if (map_obj.contains("offices")) {
-        for (const auto& office_json : map_obj.at("offices").as_array()) {
-            map.AddOffice(ParseOffice(office_json.as_object()));
-        }
+Road ParseRoad(const json::object& object) {
+    const json::string_view start_x_key = "x0";
+    const json::string_view start_y_key = "y0";
+    const json::string_view end_x_key = "x1";
+    const json::string_view end_y_key = "y1";
+
+    Point start {
+        Coord(object.at(start_x_key).as_int64()),
+        Coord(object.at(start_y_key).as_int64()),
+    };
+
+    if (object.contains(end_x_key)) {
+        Coord end_x = object.at(end_x_key).as_int64();
+        return Road(Road::HORIZONTAL, start, end_x);
+    } else {
+        Coord end_y = object.at(end_y_key).as_int64();
+        return Road(Road::VERTICAL, start, end_y);
     }
 }
 
-model::Game LoadGame(const std::filesystem::path& json_path) {
-    // Read file content
-    std::ifstream file(json_path);
-    if (!file) {
-        throw std::runtime_error("Failed to open file: " + json_path.string());
+Building ParseBuilding(const json::object& object) {
+    const json::string_view x_key = "x";
+    const json::string_view y_key = "y";
+    const json::string_view width_key = "w";
+    const json::string_view height_key = "h";
+
+    return Building {Rectangle {
+        Point {
+            Coord(object.at(x_key).as_int64()),
+            Coord(object.at(y_key).as_int64()),
+        },
+        Size {
+            Dimension(object.at(width_key).as_int64()),
+            Dimension(object.at(height_key).as_int64()),
+        },
+    }};
+}
+
+Office ParseOffice(const json::object& object) {
+    const json::string_view id_key = "id";
+    const json::string_view x_key = "x";
+    const json::string_view y_key = "y";
+    const json::string_view offset_x_key = "offsetX";
+    const json::string_view offset_y_key = "offsetY";
+
+    return Office {
+        Office::Id(json::value_to<std::string>(object.at(id_key))),
+        Point {
+            Coord(object.at(x_key).as_int64()),
+            Coord(object.at(y_key).as_int64()),
+        },
+        Offset {
+            Dimension(object.at(offset_x_key).as_int64()),
+            Dimension(object.at(offset_y_key).as_int64()),
+        },
+    };
+}
+
+Map ParseMap(const json::object& object) {
+    const json::string_view id_key = "id";
+    const json::string_view name_key = "name";
+    const json::string_view roads_key = "roads";
+    const json::string_view buildings_key = "buildings";
+    const json::string_view offices_key = "offices";
+
+    Map map {
+        Map::Id(json::value_to<std::string>(object.at(id_key))),
+        json::value_to<std::string>(object.at(name_key)),
+    };
+
+    for (const auto& node : object.at(roads_key).as_array()) {
+        map.AddRoad(ParseRoad(node.as_object()));
     }
-    
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string content = buffer.str();
-    
-    // Parse JSON
-    auto json = boost::json::parse(content);
-    auto& maps = json.as_object().at("maps").as_array();
-    
-    model::Game game;
-    
-    for (const auto& map_json : maps) {
-        std::string map_id = std::string(map_json.at("id").as_string());
-        std::string map_name = std::string(map_json.at("name").as_string());
-        std::cerr << "Loading map: id='" << map_id << "', name='" << map_name << "'" << std::endl;
-        
-        model::Map map(
-            model::Map::Id{map_id},
-            map_name
-        );
-        
-        LoadMapObjects(map, map_json.as_object());
-        game.AddMap(std::move(map));
+
+    for (const auto& node : object.at(buildings_key).as_array()) {
+        map.AddBuilding(ParseBuilding(node.as_object()));
     }
-    
+
+    for (const auto& node : object.at(offices_key).as_array()) {
+        map.AddOffice(ParseOffice(node.as_object()));
+    }
+
+    return map;
+}
+
+Game LoadGame(const std::filesystem::path& json_path) {
+    auto document = LoadJson(json_path);
+    Game game;
+
+    const json::string_view maps_key = "maps";
+
+    for (const auto& node : document.at(maps_key).as_array()) {
+        game.AddMap(ParseMap(node.as_object()));
+    }
+
     return game;
 }
 

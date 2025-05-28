@@ -1,39 +1,41 @@
 #include "model.h"
 
 #include <stdexcept>
-#include <iostream>
-#include <iomanip>
 
 namespace model {
 using namespace std::literals;
 
 void Map::AddOffice(Office office) {
-    const auto& id = office.GetId();
-    if (warehouse_id_to_index_.contains(id)) {
-        throw std::invalid_argument("Duplicate office");
+    if (warehouse_id_to_index_.contains(office.GetId())) {
+        throw std::invalid_argument("Duplicate warehouse");
     }
-    
+
     const size_t index = offices_.size();
-    offices_.push_back(std::move(office));
-    warehouse_id_to_index_[id] = index;
+    Office& new_office = offices_.emplace_back(std::move(office));
+    try {
+        warehouse_id_to_index_.emplace(new_office.GetId(), index);
+    } catch (...) {
+        // Удаляем офис из вектора, если не удалось вставить в unordered_map
+        offices_.pop_back();
+        throw;
+    }
 }
 
 void Game::AddMap(Map map) {
-    const auto id = map.GetId();
-    if (map_id_to_index_.contains(id)) {
-        throw std::invalid_argument("Duplicate map");
-    }
     const size_t index = maps_.size();
-    maps_.push_back(std::move(map));
-    map_id_to_index_[id] = index;
-    
-    // Debug output
-    std::cerr << "Added map with id: '" << *id << "' (length: " << (*id).length() << ")\n";
-    std::cerr << "Map id bytes: ";
-    for (char c : *id) {
-        std::cerr << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(static_cast<unsigned char>(c)) << " ";
+    if (auto [it, inserted] = map_id_to_index_.emplace(map.GetId(), index);
+        !inserted) {
+        throw std::invalid_argument(
+            "Map with id "s + *map.GetId() + " already exists"s
+        );
+    } else {
+        try {
+            maps_.emplace_back(std::move(map));
+        } catch (...) {
+            map_id_to_index_.erase(it);
+            throw;
+        }
     }
-    std::cerr << std::dec << "\n";
 }
 
 }  // namespace model
