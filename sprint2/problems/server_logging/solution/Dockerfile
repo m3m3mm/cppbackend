@@ -1,22 +1,30 @@
-FROM ubuntu:22.04
+FROM gcc:11.3 as build
 
-RUN apt-get update && \
-    apt-get install -y \
-    build-essential \
-    cmake \
-    libboost-all-dev \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt update && \
+    apt install -y \
+      python3-pip \
+      cmake \
+    && \
+    pip3 install conan==1.59.0
 
-WORKDIR /app
+COPY conanfile.txt /app/
+RUN mkdir /app/build && cd /app/build && \
+    conan install .. --build=missing -s compiler.libcxx=libstdc++11
 
-COPY . .
-COPY data ./data
+COPY ./src /app/src
+COPY CMakeLists.txt /app/
 
-RUN mkdir build && \
-    cd build && \
-    cmake .. && \
-    make
+RUN cd /app/build && \
+    cmake -DCMAKE_BUILD_TYPE=Release .. && \
+    cmake --build .
 
-EXPOSE 8080
+FROM ubuntu:22.04 as run
 
-CMD ["sh", "-c", "./build/server_logging & sleep 5"] 
+RUN groupadd -r www && useradd -r -g www www
+USER www
+
+COPY --from=build /app/build/bin/game_server /app/
+COPY ./data /app/data
+COPY ./static /app/static
+
+ENTRYPOINT ["/app/game_server", "/app/data/config.json", "/app/static"]

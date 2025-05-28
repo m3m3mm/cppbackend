@@ -1,24 +1,33 @@
-cmake_minimum_required(VERSION 3.10)
-project(server_logging)
+cmake_minimum_required(VERSION 3.11)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+project(game_server CXX)
+set(CMAKE_CXX_STANDARD 20)
 
-find_package(Boost REQUIRED COMPONENTS log log_setup system filesystem)
+include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
+conan_basic_setup(TARGETS)
 
-add_executable(server_logging
+find_package(Boost 1.78.0 REQUIRED)
+
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+
+add_executable(game_server
     src/main.cpp
+    src/http_server.cpp
+    src/http_server.h
+    src/sdk.h
+    src/model.h
+    src/model.cpp
+    src/tagged.h
+    src/boost_json.cpp
+    src/json_loader.h
+    src/json_loader.cpp
+    src/request_handler.cpp
+    src/request_handler.h
+    src/json_serializer.cpp
+    src/json_serializer.h
+    src/json_logger.cpp
+    src/json_logger.h
 )
 
-target_link_libraries(server_logging
-    PRIVATE
-    Boost::log
-    Boost::log_setup
-    Boost::system
-    Boost::filesystem
-)
-
-target_include_directories(server_logging
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-) 
+target_link_libraries(game_server PRIVATE Threads::Threads CONAN_PKG::boost)
