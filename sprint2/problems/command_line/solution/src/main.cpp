@@ -1,94 +1,89 @@
-#include "sdk.h"
-//
 #include <boost/asio/io_context.hpp>
-#include <iostream>
-#include <thread>
 #include <boost/asio/signal_set.hpp>
 
-#include "json_loader.h"
-#include "json_helper.h"
-#include "request_handler.h"
-#include "logger.h"
-#include "command_line_parser.h"
+#include <iostream>
+#include <memory>
+#include <thread>
 
-using namespace std::literals;
+#include "application.h"
+#include "command_handler.h"
+#include "game_properties.h"
+#include "json_constructor.h"
+#include "json_loader.h"
+#include "logger.h"
+#include "request_handler.h"
+#include "sdk.h"
+
+
+
 namespace net = boost::asio;
 namespace sys = http_server::sys;
 
+using namespace std::literals;
+
 namespace {
-
-// Выполняет функцию fn на n потоках, включая текущий поток
+// Запускает функцию fn на n потоках, включая текущий
 template <typename Fn>
-void RunWorkers(unsigned workersCount, const Fn& fn) {
-    workersCount = std::max(1u, workersCount);
-
-    #ifdef __clang__
-        std::vector<std::thread> workers;
-    #else
-        std::vector<std::jthread> workers;
-    #endif
-
-    workers.reserve(workersCount - 1);
+void RunWorkers(unsigned n, const Fn& fn) {
+    n = std::max(1u, n);
+    std::vector<std::jthread> workers;
+    workers.reserve(n - 1);
     // Запускаем n-1 рабочих потоков, выполняющих функцию fn
-    while (--workersCount) {
+    while (--n) {
         workers.emplace_back(fn);
     }
     fn();
-
-    #ifdef __clang__
-        for (auto& worker : workers) {
-            worker.join();
-        }
-    #endif
 }
-
 }  // namespace
 
 int main(int argc, const char* argv[]) {
+    logger::InitBoostLogFilter();
+
     try {
-        // 0. Запуск логгера
-        logger::InitBoostLogFilter();
+         if (auto args = command_handler::HandleCommands(argc, argv)) {
+            // 1. Загружаем карту из файла и построить модель игры
+            model::Game game = json_loader::LoadGame(args->config_file, args->randomize_spawn_point);
 
-        if (auto args = command_line::ParseCommandLine(argc, argv)) {
-            // 1. Загрузка карты из файла и создание модели игры
-            //std::string path = "/Users/balovdmitry/Desktop/SB/cpp-backend-practicum/sprint1/problems/map_json/precode/data/config.json";
-            //model::Game game = json_loader::LoadGame(path);
-            model::Game game = json_loader::LoadGame(args.value().config_file);
+            // 2. Инициализируем io_context
+            const unsigned num_threads = std::thread::hardware_concurrency();
+            net::io_context ioc(num_threads);
 
-            // 2. Создание io_context
-            const unsigned numThreads = std::thread::hardware_concurrency();
-            net::io_context ioc(numThreads);
-
-            // 3. Добавление асинхронного обработчика сигналов SIGINT и SIGTERM
+            // 3. Добавляем асинхронный обработчик сигналов SIGINT и SIGTERM
             // Подписываемся на сигналы и при их получении завершаем работу сервера
             net::signal_set signals(ioc, SIGINT, SIGTERM);
-            signals.async_wait([&ioc](const sys::error_code& ec, [[maybe_unused]] int signalNumber) {
+            signals.async_wait([&ioc](const sys::error_code& ec, [[maybe_unused]] int signal_number) {
                 if (!ec) {
-                    std::cout << "Signal "sv << signalNumber << " received"sv << std::endl;
                     ioc.stop();
                 }
             });
 
-            // 4. Создание обработчика HTTP-запросов и связывание его с моделью игры
-            auto handler = std::make_shared<http_handler::RequestHandler>(game, ioc, args.value());
+            // 4. Создаём обработчик HTTP-запросов и связываем его с моделью игры
+            auto api_strand = net::make_strand(ioc);
+            auto handler = std::make_shared<http_handler::RequestHandler>(std::move(api_strand),
+                                                                          std::move(game), 
+                                                                          std::move(args->static_dir),
+                                                                          std::move(std::chrono::milliseconds(args->tick_period)));
 
-            // 5. Запуск HTTP-сервера, делегируя обработку запросов обработчику
+            // 5. Запустить обработчик HTTP-запросов, делегируя их обработчику запросов
             const auto address = net::ip::make_address("0.0.0.0");
             constexpr net::ip::port_type port = 8080;
             http_server::ServeHttp(ioc, {address, port}, [&handler](auto&& req, auto&& send) {
                 (*handler)(std::forward<decltype(req)>(req), std::forward<decltype(send)>(send));
             });
-            
-            logger::LogJsonAndMessage(json_helper::CreateStartServerValue(port, address), "server has started");
 
-            // 6. Запуск обработки асинхронных операций
-            RunWorkers(std::max(1u, numThreads), [&ioc] {
+            logger::LogExecution(json_constructor::MakeLogStartJSON(port, address.to_string()), "server started");
+
+            // 6. Запускаем обработку асинхронных операций
+            RunWorkers(std::max(1u, num_threads), [&ioc] {
                 ioc.run();
             });
-            logger::LogJsonAndMessage(json_helper::CreateStopServerValue(EXIT_SUCCESS), "server exited");
+
+            logger::LogExecution(json_constructor::MakeLogStopJSON(EXIT_SUCCESS), "server exited");
         }
     } catch (const std::exception& ex) {
-        logger::LogJsonAndMessage(json_helper::CreateStopServerValue(EXIT_FAILURE, ex.what()), "server exited");
+        logger::LogExecution(json_constructor::MakeLogStopJSON(EXIT_FAILURE, ex.what()), "server exited");
         return EXIT_FAILURE;
     }
+
+    return 0;
 }
