@@ -4,7 +4,7 @@ project(game_server CXX)
 set(CMAKE_CXX_STANDARD 20)
 
 include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
-conan_basic_setup(TARGETS)
+conan_basic_setup()
 
 find_package(Boost 1.78.0 REQUIRED)
 if(Boost_FOUND)
@@ -14,9 +14,21 @@ endif()
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
-file(GLOB gameserver_SRC "src/*.h" "src/*.cpp")
-add_executable(game_server ${gameserver_SRC})
-
-target_link_libraries(game_server ${Boost_LIBRARIES} Threads::Threads CONAN_PKG::boost)
-target_include_directories(game_server PRIVATE CONAN_PKG::boost)
-
+add_executable(game_server
+	src/main.cpp
+	src/http_server.cpp
+	src/http_server.h
+	src/sdk.h
+	src/model.h
+	src/model.cpp
+	src/tagged.h
+	src/boost_json.cpp
+	src/json_loader.h
+	src/json_loader.cpp
+	src/request_handler.cpp
+	src/request_handler.h
+	src/target_storage.h
+	src/body_constructor.h
+	src/body_constructor.cpp
+)
+target_link_libraries(game_server PRIVATE Threads::Threads)

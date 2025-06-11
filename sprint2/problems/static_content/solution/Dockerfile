@@ -6,12 +6,12 @@ RUN apt update && \
       python3-pip \
       cmake \
     && \
-    pip3 install conan==1.59.0
+    pip3 install conan==1.*
 
 # Запуск conan как раньше
 COPY conanfile.txt /app/
 RUN mkdir /app/build && cd /app/build && \
-    conan install .. --build=missing -s build_type=Release -s compiler.libcxx=libstdc++11
+    conan install .. --build=missing -s compiler.libcxx=libstdc++11
 
 # Папка data больше не нужна
 COPY ./src /app/src
@@ -33,7 +33,5 @@ USER www
 COPY --from=build /app/build/bin/game_server /app/
 COPY ./data /app/data
 COPY ./static /app/static
-
 # Запускаем игровой сервер
-ENTRYPOINT ["/app/game_server", "--config-file", "/app/data/config.json", "--www-root", "/app/static", "--tick-period", "25", "--randomize-spawn-points"]
-
+ENTRYPOINT ["/app/game_server", "/app/data/config.json"]
