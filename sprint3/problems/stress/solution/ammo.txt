@@ -1,0 +1,13 @@
+66 
+GET /api/v1/maps/map1 HTTP/1.1
+Content-Type: application/json
+
+66 
+GET /api/v1/maps/town HTTP/1.1
+Content-Type: application/json
+
+61 
+GET /api/v1/maps HTTP/1.1
+Content-Type: application/json
+
+
