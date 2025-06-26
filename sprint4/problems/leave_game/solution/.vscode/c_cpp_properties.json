@@ -1,0 +1,19 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "~/.conan/data/boost/1.78.0/_/_/package/8cc3305c27e5ff838d1c7590662e309638310dfc/include",
+                "~/.conan/data/libpqxx/7.7.4/_/_/package/04cbdfff4f57b797b6cf60c443f251cb70622a37/include",
+                "~/.conan/data/catch2/3.2.0/_/_/package/25c9ba754cb107c25053d39ff36e4eb0233c185e/include"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/clang-14",
+            "cStandard": "c17",
+            "cppStandard": "c++20",
+            "intelliSenseMode": "linux-clang-x64"
+        }
+    ],
+    "version": 4
+}
