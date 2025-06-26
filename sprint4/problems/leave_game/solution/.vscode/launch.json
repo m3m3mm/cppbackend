@@ -1,0 +1,28 @@
+{
+    "configurations": [
+    {
+        "name": "(gdb) Запустить",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "/home/azarchik/cpp-backend/sprint4/problems/leave_game/solution/build/bin/game_server",
+        "args": ["-c", "../data/config.json", "-w", "../static/", "--randomize-spawn-points","-t", "50", "--state-file", "/home/azarchik/cpp-backend/sprint4/problems/leave_game/solution/save_files/save", "--save-state-period", "3500"],
+        "stopAtEntry": false,
+        "cwd": "/home/azarchik/cpp-backend/sprint4/problems/leave_game/solution/src",
+        "environment": [],
+        "externalConsole": false,
+        "MIMode": "gdb",
+        "setupCommands": [
+            {
+                "description": "Включить автоматическое форматирование для gdb",
+                "text": "-enable-pretty-printing",
+                "ignoreFailures": true
+            },
+            {
+                "description": "Задать для варианта приложения дизассемблирования значение Intel",
+                "text": "-gdb-set disassembly-flavor intel",
+                "ignoreFailures": true
+            }
+        ]
+    }
+    ]
+}
